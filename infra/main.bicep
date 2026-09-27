@@ -8,6 +8,7 @@ param acrLoginServer string
 param pullIdentityId string
 param tenantId string
 param entraClientId string
+param allowedPrincipalId string
 
 @secure()
 param entraClientSecret string
@@ -103,7 +104,12 @@ resource authentication 'Microsoft.App/containerApps/authConfigs@2025-01-01' = {
           clientSecretSettingName: 'entra-client-secret'
           openIdIssuer: '${az.environment().authentication.loginEndpoint}${tenantId}/v2.0'
         }
-        validation: { allowedAudiences: [ 'api://${entraClientId}', entraClientId ] }
+        validation: {
+          allowedAudiences: [ 'api://${entraClientId}', entraClientId ]
+          defaultAuthorizationPolicy: {
+            allowedPrincipals: { identities: [ allowedPrincipalId ] }
+          }
+        }
       }
     }
   }

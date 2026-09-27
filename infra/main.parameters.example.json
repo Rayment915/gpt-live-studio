@@ -10,6 +10,7 @@
     "pullIdentityId": { "value": "REPLACE_ACR_PULL_IDENTITY_RESOURCE_ID" },
     "tenantId": { "value": "REPLACE_TENANT_ID" },
     "entraClientId": { "value": "REPLACE_ENTRA_APPLICATION_ID" },
+    "allowedPrincipalId": { "value": "REPLACE_AUTHORIZED_USER_OBJECT_ID" },
     "foundryEndpoint": { "value": "https://your-resource.openai.azure.com" },
     "responsesDeployment": { "value": "gpt-6-luna" },
     "externalIngress": { "value": false },
