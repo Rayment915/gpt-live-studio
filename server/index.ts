@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 import WebSocket, { WebSocketServer } from 'ws';
 import { DEFAULT_CONFIG, object, safeEvent, validateCommand, validateConfig, type Event, type SessionConfig, type Transport } from '../shared/protocol.js';
 import { isSceneId, validateSceneConfig, type SceneId } from '../shared/scenarios.js';
-import { allowedEndpoint, originAllowed, parseCookie, sameToken } from './security.js';
+import { allowedEndpoint, originAllowed, parseCookie, sameToken, validateAdminPasswordHash, verifyAdminPassword } from './security.js';
 import { runDemoTool, ToolLedger } from './tools.js';
 import { evaluateSceneCall, initialSceneState, type SceneState } from './scenes.js';
 
@@ -21,10 +21,15 @@ const deployment = process.env.AZURE_OPENAI_DEPLOYMENT ?? 'gpt-live-1';
 const responsesDeployment = process.env.RESPONSES_DEPLOYMENT ?? 'gpt-6-luna';
 const maxSessions = Number(process.env.MAX_SESSIONS ?? 4);
 const maxDuration = Number(process.env.MAX_SESSION_SECONDS ?? 1800) * 1000;
-const authMode = process.env.AUTH_MODE ?? (production ? 'entra' : 'local');
+const authMode = process.env.AUTH_MODE ?? (production ? '' : 'local');
+const adminPasswordHash = process.env.STUDIO_ADMIN_PASSWORD_HASH ?? '';
 const origins = new Set((process.env.APP_ORIGIN ?? `http://localhost:${port},http://127.0.0.1:${port}`).split(',').map(value => value.trim()));
-if (authMode === 'local' && !['127.0.0.1', 'localhost', '::1'].includes(host) && process.env.ALLOW_PRIVATE_CONTAINER !== 'true') throw new Error('非回环地址必须启用 AUTH_MODE=entra；私有容器测试可显式设置 ALLOW_PRIVATE_CONTAINER=true');
-if (!['local', 'entra'].includes(authMode)) throw new Error('AUTH_MODE 必须是 local 或 entra');
+if (authMode === 'local' && !['127.0.0.1', 'localhost', '::1'].includes(host) && process.env.ALLOW_PRIVATE_CONTAINER !== 'true') throw new Error('非回环地址必须启用 AUTH_MODE=password；私有容器测试可显式设置 ALLOW_PRIVATE_CONTAINER=true');
+if (!['local', 'password'].includes(authMode)) throw new Error('AUTH_MODE 必须是 local 或 password；生产环境必须显式配置');
+if (authMode === 'password') {
+  validateAdminPasswordHash(adminPasswordHash);
+  if (production && [...origins].some(origin => !origin.startsWith('https://'))) throw new Error('密码登录必须使用 HTTPS APP_ORIGIN');
+}
 
 type Owner = { id: string; csrf: string; expires: number; principal: string; creating: boolean };
 type Live = {
@@ -35,9 +40,12 @@ type Live = {
   idle?: ReturnType<typeof setTimeout>; closeTimer?: ReturnType<typeof setTimeout>;
 };
 const owners = new Map<string, Owner>();
+const loginSessions = new Map<string, number>();
 const sessions = new Map<string, Live>();
 const alive = new WeakMap<WebSocket, boolean>();
 let creatingCount = 0;
+let loginFailures = 0;
+let loginWindowEnds = 0;
 const app = express();
 app.disable('x-powered-by');
 app.use(express.json({ limit: '1mb' }));
@@ -45,7 +53,8 @@ app.use((request, response, next) => {
   response.setHeader('X-Content-Type-Options', 'nosniff');
   response.setHeader('Referrer-Policy', 'no-referrer');
   response.setHeader('Permissions-Policy', 'microphone=(self), camera=()');
-  response.setHeader('Content-Security-Policy', `default-src 'self'; script-src 'self'${production ? '' : " 'unsafe-inline'"}; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self' https://${endpoint.hostname} wss://${endpoint.hostname}; frame-ancestors 'none'; base-uri 'self'`);
+  response.setHeader('Content-Security-Policy', `default-src 'self'; script-src 'self'${production ? '' : " 'unsafe-inline'"}; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self' https://${endpoint.hostname} wss://${endpoint.hostname}; form-action 'self'; frame-ancestors 'none'; base-uri 'self'`);
+  if (authMode === 'password') response.setHeader('Cache-Control', 'no-store');
   if (request.path.startsWith('/api')) response.setHeader('Cache-Control', 'no-store');
   next();
 });
@@ -53,9 +62,49 @@ app.get('/healthz', (_request, response) => response.json({ status: 'ok' }));
 
 function principal(headers: Record<string, any>): string {
   if (authMode === 'local') return 'local';
-  const value = headers['x-ms-client-principal-id'];
-  if (typeof value !== 'string' || !value.trim()) throw new Error('需要 Azure Container Apps 平台身份认证');
-  return value;
+  if (authMode === 'password') {
+    const token = parseCookie(headers.cookie, 'studio_login');
+    if (!token || (loginSessions.get(token) ?? 0) <= Date.now()) throw new Error('请先登录');
+    return token;
+  }
+  throw new Error('认证模式未配置');
+}
+
+if (authMode === 'password') {
+  const loginPage = (failed: boolean) => `<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>登录 · GPT-Live Studio</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f2f6fc;font:16px system-ui,sans-serif;color:#142b4a}main{width:min(90vw,360px);background:white;padding:36px;border:1px solid #d7e2f4;border-radius:16px;box-shadow:0 18px 50px #16335916}h1{font-size:24px;margin:0 0 8px}p{color:#5a6d86;margin:0 0 24px}label{display:block;margin:16px 0 6px}input{box-sizing:border-box;width:100%;padding:12px;border:1px solid #afc0d9;border-radius:8px;font:inherit}button{width:100%;margin-top:24px;padding:13px;background:#2462db;border:0;border-radius:8px;color:white;font:inherit;cursor:pointer}.error{color:#b42318;margin:16px 0 0}</style></head><body><main><h1>GPT-Live Studio</h1><p>登录后开始实时语音体验</p><form action="/login" method="post"><label for="username">用户名</label><input id="username" name="username" autocomplete="username" required autofocus><label for="password">密码</label><input id="password" name="password" type="password" autocomplete="current-password" required><button type="submit">登录</button></form>${failed ? '<p class="error" role="alert">用户名或密码错误，请重试。</p>' : ''}</main></body></html>`;
+  app.get('/login', (request, response) => {
+    response.setHeader('Cache-Control', 'no-store');
+    try { principal(request.headers); return void response.redirect(303, '/'); } catch { response.type('html').send(loginPage(request.query.failed === '1')); }
+  });
+  app.post('/login', express.urlencoded({ extended: false, limit: '2kb' }), (request, response) => {
+    response.setHeader('Cache-Control', 'no-store');
+    if (request.headers['sec-fetch-site'] === 'cross-site' || (request.headers.origin && request.headers.origin !== 'null' && !originAllowed(request.headers.origin, origins)) || (request.headers.origin === 'null' && request.headers['sec-fetch-site'] !== 'same-origin')) return void response.sendStatus(403);
+    if (Date.now() >= loginWindowEnds) { loginFailures = 0; loginWindowEnds = Date.now() + 5 * 60_000; }
+    if (loginFailures >= 10) { response.setHeader('Retry-After', String(Math.ceil((loginWindowEnds - Date.now()) / 1000))); return void response.status(429).send('登录尝试过多，请稍后再试'); }
+    if (!verifyAdminPassword(adminPasswordHash, request.body?.username, request.body?.password)) { loginFailures++; return void response.redirect(303, '/login?failed=1'); }
+    loginFailures = 0;
+    const token = randomBytes(32).toString('hex');
+    loginSessions.set(token, Date.now() + 8 * 3600_000);
+    response.setHeader('Set-Cookie', `studio_login=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${production ? '; Secure' : ''}`);
+    response.redirect(303, '/');
+  });
+  app.post('/logout', (request, response) => {
+    try {
+      const identity = principal(request.headers);
+      const ownerId = parseCookie(request.headers.cookie, 'studio_owner');
+      const owner = ownerId ? owners.get(ownerId) : undefined;
+      if (!owner || owner.principal !== identity || !originAllowed(request.headers.origin, origins) || !sameToken(request.headers['x-studio-csrf'] as string, owner.csrf)) return void response.sendStatus(403);
+      loginSessions.delete(identity);
+      owners.delete(owner.id);
+      for (const live of sessions.values()) if (live.owner === owner.id) closeLive(live, '用户退出登录');
+      response.setHeader('Set-Cookie', ['studio_login=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0', 'studio_owner=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'].map(cookie => cookie + (production ? '; Secure' : '')));
+      response.sendStatus(204);
+    } catch { response.sendStatus(401); }
+  });
+  app.use((request, response, next) => {
+    try { principal(request.headers); next(); }
+    catch { if (request.path.startsWith('/api')) response.status(401).json({ error: '请先登录' }); else response.redirect(303, '/login'); }
+  });
 }
 
 app.use('/api', (request, response, next) => {
@@ -70,7 +119,7 @@ app.use('/api', (request, response, next) => {
       if (owners.size > 1000) throw new Error('访问会话过多，请稍后重试');
       owner = { id: randomBytes(32).toString('hex'), csrf: randomBytes(32).toString('hex'), expires: Date.now() + 8 * 3600_000, principal: identity, creating: false };
       owners.set(owner.id, owner);
-      response.setHeader('Set-Cookie', `studio_owner=${owner.id}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${authMode === 'entra' ? '; Secure' : ''}`);
+      response.setHeader('Set-Cookie', `studio_owner=${owner.id}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${production ? '; Secure' : ''}`);
     }
     if (!owner) return void response.status(401).json({ error: '请刷新页面建立应用会话' });
     if (request.method !== 'GET' && (!originAllowed(request.headers.origin, origins) || !sameToken(request.headers['x-studio-csrf'] as string, owner.csrf))) return void response.status(403).json({ error: '来源或安全令牌无效，请刷新页面' });
@@ -84,7 +133,7 @@ function message(error: unknown): string {
   return apiKey ? text.split(apiKey).join('[redacted]') : text;
 }
 
-app.get('/api/config', (_request, response) => response.json({ configured, endpoint: endpoint.origin, deployment, responsesDeployment, csrf: response.locals.owner.csrf, defaultConfig: { ...DEFAULT_CONFIG, model: deployment }, maxSessionSeconds: maxDuration / 1000 }));
+app.get('/api/config', (_request, response) => response.json({ configured, endpoint: endpoint.origin, deployment, responsesDeployment, csrf: response.locals.owner.csrf, authMode, defaultConfig: { ...DEFAULT_CONFIG, model: deployment }, maxSessionSeconds: maxDuration / 1000 }));
 
 function publish(live: Live, event: Event) {
   const safe = event.type === 'session.output_audio.delta' ? event : safeEvent(event, apiKey);
@@ -369,7 +418,7 @@ if (production) {
   app.use(vite.middlewares);
 }
 
-const sweep = setInterval(() => { for (const [id, owner] of owners) if (owner.expires < Date.now()) owners.delete(id); }, 60_000);
+const sweep = setInterval(() => { for (const [id, owner] of owners) if (owner.expires < Date.now()) owners.delete(id); for (const [id, expires] of loginSessions) if (expires < Date.now()) loginSessions.delete(id); }, 60_000);
 sweep.unref();
 const heartbeat = setInterval(() => {
   const sockets = [...clients.clients, ...[...sessions.values()].filter(live => live.status !== 'closed').map(live => live.upstream)];

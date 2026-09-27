@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, ArrowDownToLine, ArrowRight, AudioLines, Check, ChevronDown, CircleHelp, Clock3, Headphones, Info, LoaderCircle, Mic, MicOff, Play, Radio, Send, Settings2, ShieldCheck, Square, Upload, Volume2, VolumeX, X } from 'lucide-react';
+import { Activity, ArrowDownToLine, ArrowRight, AudioLines, Check, ChevronDown, CircleHelp, Clock3, Headphones, Info, LoaderCircle, LogOut, Mic, MicOff, Play, Radio, Send, Settings2, ShieldCheck, Square, Upload, Volume2, VolumeX, X } from 'lucide-react';
 import { DEFAULT_CONFIG, validateConfig, type Event, type SessionConfig, type Transport } from '../shared/protocol';
 import { sceneConfig, validateSceneConfig, type SceneId } from '../shared/scenarios';
 import { ConfigPanel } from './components/ConfigPanel';
@@ -9,7 +9,7 @@ import { Waveform } from './components/Waveform';
 import { LiveClient } from './lib/client';
 import { emptyState, groupTranscripts, reduceEvent } from './lib/state';
 
-type PublicConfig = { configured: boolean; endpoint: string; deployment: string; responsesDeployment: string; csrf: string; defaultConfig: SessionConfig; maxSessionSeconds: number };
+type PublicConfig = { configured: boolean; endpoint: string; deployment: string; responsesDeployment: string; csrf: string; authMode?: string; defaultConfig: SessionConfig; maxSessionSeconds: number };
 type Status = 'idle' | 'connecting' | 'live' | 'closing' | 'ended';
 const statusLabels: Record<Status, string> = { idle: '准备就绪', connecting: '正在连接', live: '会话进行中', closing: '正在结束', ended: '会话已结束' };
 const formatTime = (seconds: number) => `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
@@ -145,7 +145,7 @@ export function App() {
   const outputText = state.transcripts.filter(item => item.speaker === 'output').map(item => item.text).join('');
 
   return <div className="app-shell">
-    <header className="topbar"><a href="/" className="brand" aria-label="GPT-Live Studio 首页"><span className="brand-symbol"><AudioLines size={23} strokeWidth={1.7} /></span><span>GPT-Live <strong>Studio</strong></span><span className="preview-tag">PREVIEW</span></a><nav className="desktop-nav" aria-label="工作区"><span className="nav-active">体验工作台</span><button onClick={() => setHelp(true)}>协议与使用 <ArrowUpRightIcon /></button></nav><div className="topbar-right"><span className="azure-brand"><span className="azure-mark">A</span> Azure Foundry</span><span className="header-rule" /><button className="icon-button" aria-label="使用帮助" onClick={() => setHelp(true)}><CircleHelp size={19} /></button></div></header>
+    <header className="topbar"><a href="/" className="brand" aria-label="GPT-Live Studio 首页"><span className="brand-symbol"><AudioLines size={23} strokeWidth={1.7} /></span><span>GPT-Live <strong>Studio</strong></span><span className="preview-tag">PREVIEW</span></a><nav className="desktop-nav" aria-label="工作区"><span className="nav-active">体验工作台</span><button onClick={() => setHelp(true)}>协议与使用 <ArrowUpRightIcon /></button></nav><div className="topbar-right"><span className="azure-brand"><span className="azure-mark">A</span> Azure Foundry</span><span className="header-rule" />{connection?.authMode === 'password' && <button className="text-button" onClick={() => act(async () => { const result = await fetch('/logout', { method: 'POST', headers: { 'X-Studio-Csrf': connection.csrf } }); if (!result.ok) throw new Error('退出失败'); location.assign('/login'); })}><LogOut size={14} />退出登录</button>}<button className="icon-button" aria-label="使用帮助" onClick={() => setHelp(true)}><CircleHelp size={19} /></button></div></header>
     <main>
       <section className="workspace-heading"><div><div className="eyebrow"><span />FULL-DUPLEX VOICE LAB</div><h1>对话，不必等待。</h1><p>边听边说，自然插话。探索 GPT-Live 的实时语音能力。</p></div><div className="workspace-meta"><div className="deployment-badge"><span className="model-dot" /><code>{connection?.deployment ?? 'gpt-live-1'}</code><span>部署</span></div><span className="endpoint-label" title={connection?.endpoint}>{connection?.endpoint ? new URL(connection.endpoint).hostname.split('.')[0] : '正在读取配置…'}</span></div></section>
       {connection && !connection.configured && <div className="alert warning"><Info size={17} /><span>后端还未配置密钥。请填写项目 .env 中的 AZURE_OPENAI_API_KEY 并重启；不要将密钥填进前端 JSON。</span></div>}

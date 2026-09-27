@@ -6,15 +6,11 @@ param environmentName string
 param image string
 param acrLoginServer string
 param pullIdentityId string
-param tenantId string
-param entraClientId string
-param allowedPrincipalId string
-
-@secure()
-param entraClientSecret string
-
 @secure()
 param foundryApiKey string
+
+@secure()
+param adminPasswordHash string
 
 param foundryEndpoint string
 param voiceDeployment string = 'gpt-live-1'
@@ -51,7 +47,7 @@ resource studio 'Microsoft.App/containerApps@2025-01-01' = {
       ]
       secrets: [
         { name: 'foundry-api-key', value: foundryApiKey }
-        { name: 'entra-client-secret', value: entraClientSecret }
+        { name: 'admin-password-hash', value: adminPasswordHash }
       ]
     }
     template: {
@@ -65,7 +61,8 @@ resource studio 'Microsoft.App/containerApps@2025-01-01' = {
             { name: 'NODE_ENV', value: 'production' }
             { name: 'HOST', value: '0.0.0.0' }
             { name: 'PORT', value: '3000' }
-            { name: 'AUTH_MODE', value: 'entra' }
+            { name: 'AUTH_MODE', value: 'password' }
+            { name: 'STUDIO_ADMIN_PASSWORD_HASH', secretRef: 'admin-password-hash' }
             { name: 'APP_ORIGIN', value: appOrigin }
             { name: 'AZURE_OPENAI_ENDPOINT', value: foundryEndpoint }
             { name: 'AZURE_OPENAI_API_KEY', secretRef: 'foundry-api-key' }
@@ -89,31 +86,8 @@ resource authentication 'Microsoft.App/containerApps/authConfigs@2025-01-01' = {
   parent: studio
   name: 'current'
   properties: {
-    platform: { enabled: true }
-    globalValidation: {
-      unauthenticatedClientAction: 'RedirectToLoginPage'
-      redirectToProvider: 'azureactivedirectory'
-      excludedPaths: [ '/healthz' ]
-    }
-    httpSettings: { requireHttps: true }
-    identityProviders: {
-      azureActiveDirectory: {
-        enabled: true
-        registration: {
-          clientId: entraClientId
-          clientSecretSettingName: 'entra-client-secret'
-          openIdIssuer: '${az.environment().authentication.loginEndpoint}${tenantId}/v2.0'
-        }
-        validation: {
-          allowedAudiences: [ 'api://${entraClientId}', entraClientId ]
-          defaultAuthorizationPolicy: {
-            allowedPrincipals: { identities: [ allowedPrincipalId ] }
-          }
-        }
-      }
-    }
+    platform: { enabled: false }
   }
 }
 
 output url string = appOrigin
-output redirectUri string = '${appOrigin}/.auth/login/aad/callback'

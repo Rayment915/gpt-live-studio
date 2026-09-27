@@ -11,7 +11,7 @@ npm ci
 cp .env.example .env
 ```
 
-在 `.env` 中填写自己的 `AZURE_OPENAI_ENDPOINT` 和 `AZURE_OPENAI_API_KEY`。如果项目已经配置了私有 `.env`，不要覆盖它。
+在 `.env` 中填写自己的 `AZURE_OPENAI_ENDPOINT` 和 `AZURE_OPENAI_API_KEY`。如果项目已经配置了私有 `.env`，不要覆盖它。公网部署使用 `AUTH_MODE=password`，并通过 Key Vault 注入 `STUDIO_ADMIN_PASSWORD_HASH`（格式：`scrypt:<32 位十六进制盐>:<128 位十六进制摘要>`）。不要在源码、示例文件或 GitHub 中写入明文密码或哈希值。
 
 ```sh
 npm run dev
@@ -96,7 +96,7 @@ npx tsx scripts/browser-smoke.ts
 | `shared/` | 会话验证、事件限制、默认配置、日志脱敏 |
 | `server/` | 凭据与 Origin/CSRF 边界、拥有者会话、WebRTC 信令、WS/sideband、工具审批 |
 | `tests/` | 协议、音频、任务状态、安全和浏览器回归 |
-| `infra/` | Container Apps + Entra 身份认证的 Bicep 模板 |
+| `infra/` | Container Apps + 应用密码认证的 Bicep 模板 |
 
 ## 生产构建与云迁移
 
@@ -105,6 +105,6 @@ npm run build
 npm start
 ```
 
-本机生产构建仍从 `.env` 读取后端密钥。容器默认要求 Entra 平台认证，不开放匿名云端体验。云端部署时须通过私有配置提供环境、镜像仓库、身份和密钥引用，不能提交这些值。
+本机生产构建仍从 `.env` 读取后端密钥。容器通过 HTTPS 的应用内登录保护工作台、API 与 WebSocket，不开放匿名云端体验；登录令牌仅由服务器内存维护，重启后须重新登录。云端部署时须通过私有配置提供环境、镜像仓库、身份和密钥引用，不能提交这些值。
 
 仓库仅包含通用部署模板和占位符，不包含任何账户的资源 ID、真实 endpoint 或凭据。部署时需在本地提供已忽略的私有参数文件，并确认托管区域、访问人员、预算、容器环境和镜像拉取权限。

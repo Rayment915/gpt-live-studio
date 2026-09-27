@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { allowedEndpoint, originAllowed, parseCookie, sameToken } from '../server/security';
+import { allowedEndpoint, hashAdminPassword, originAllowed, parseCookie, sameToken, validateAdminPasswordHash, verifyAdminPassword } from '../server/security';
 
 describe('trusted backend boundaries', () => {
   it('rejects arbitrary proxy destinations', () => {
@@ -15,5 +15,15 @@ describe('trusted backend boundaries', () => {
     expect(sameToken('abc', 'abcd')).toBe(false);
     expect(sameToken(undefined, 'abcd')).toBe(false);
     expect(parseCookie('other=1; studio_owner=123', 'studio_owner')).toBe('123');
+  });
+  it('uses a salted password hash and rejects wrong identities and malformed hashes', () => {
+    const encoded = hashAdminPassword('test-only-password', Buffer.alloc(16, 3));
+    expect(encoded).toMatch(/^scrypt:[a-f0-9]{32}:[a-f0-9]{128}$/);
+    expect(() => validateAdminPasswordHash(encoded)).not.toThrow();
+    expect(verifyAdminPassword(encoded, 'admin', 'test-only-password')).toBe(true);
+    expect(verifyAdminPassword(encoded, 'Admin', 'test-only-password')).toBe(false);
+    expect(verifyAdminPassword(encoded, 'admin', 'wrong')).toBe(false);
+    expect(verifyAdminPassword(encoded, 'admin', 'x'.repeat(129))).toBe(false);
+    expect(() => validateAdminPasswordHash('plaintext')).toThrow();
   });
 });

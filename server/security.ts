@@ -1,4 +1,20 @@
-import { timingSafeEqual } from 'node:crypto';
+import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+
+export function hashAdminPassword(password: string, salt = randomBytes(16)): string {
+  return `scrypt:${salt.toString('hex')}:${scryptSync(password, salt, 64).toString('hex')}`;
+}
+
+export function verifyAdminPassword(encoded: string, username: unknown, password: unknown): boolean {
+  const match = /^scrypt:([a-f0-9]{32}):([a-f0-9]{128})$/i.exec(encoded);
+  if (!match) throw new Error('STUDIO_ADMIN_PASSWORD_HASH 格式无效');
+  if (typeof password !== 'string' || Buffer.byteLength(password) > 128) return false;
+  const actual = scryptSync(password, Buffer.from(match[1], 'hex'), 64);
+  return timingSafeEqual(actual, Buffer.from(match[2], 'hex')) && username === 'admin';
+}
+
+export function validateAdminPasswordHash(encoded: string): void {
+  if (!/^scrypt:[a-f0-9]{32}:[a-f0-9]{128}$/i.test(encoded)) throw new Error('STUDIO_ADMIN_PASSWORD_HASH 格式无效');
+}
 
 export function allowedEndpoint(raw: string): URL {
   const endpoint = new URL(raw);
