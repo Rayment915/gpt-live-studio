@@ -1,0 +1,16 @@
+node_modules/
+/docs/
+/.azure/
+dist/
+.env
+.env.*
+!.env.example
+output/
+test-results/
+playwright-report/
+.DS_Store
+*.log
+.cache/
+.playwright-mcp/
+infra/main.json
+infra/*.parameters.local.json

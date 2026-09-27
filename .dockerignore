@@ -1,0 +1,14 @@
+node_modules
+dist
+.git
+.env
+.env.*
+output
+test-results
+playwright-report
+.playwright-mcp
+.azure
+.cache
+*.log
+docs
+README.md
