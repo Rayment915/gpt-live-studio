@@ -83,7 +83,7 @@ describe('parallel tool ledger', () => {
   it('can continue a completed batch after a rejected simulated operation', () => {
     const ledger = new ToolLedger();
     ledger.ingest(envelope({ type: 'response.created', response: { id: 'response-1' } }));
-    ledger.ingest(envelope({ type: 'response.output_item.done', item: { type: 'function_call', call_id: 'invalid', name: 'set_demo_device', arguments: '{"device_id":"living_light","temperature":24}' } }));
+    ledger.ingest(envelope({ type: 'response.output_item.done', item: { type: 'function_call', call_id: 'invalid', name: 'set_demo_light', arguments: '{"temperature":24}' } }));
     const call = ledger.claim('invalid');
     const result = evaluateSceneCall(initialSceneState('home'), call.name, call.arguments);
     expect(JSON.parse(result.output)).toMatchObject({ ok: false, retryable: true });

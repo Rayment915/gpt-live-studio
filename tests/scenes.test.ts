@@ -15,19 +15,28 @@ describe('scenario delegation', () => {
       expect(() => validateSceneConfig(scene, { ...config, delegation: { type: 'responses', responses: { model: 'gpt-5.4', tools: SCENES[scene].tools } } }, 'gpt-6-luna')).toThrow();
       expect(() => validateSceneConfig(scene, { ...config, delegation: { type: 'responses', responses: { model: 'gpt-6-luna', tools: [] } } }, 'gpt-6-luna')).toThrow('工具配置');
     }
+    const homeTools = SCENES.home.tools.filter(tool => tool.type === 'function');
+    expect(homeTools).toHaveLength(4);
+    expect(homeTools.find(tool => tool.name === 'set_demo_air_conditioner')?.parameters.properties).not.toHaveProperty('brightness');
+    expect(homeTools.find(tool => tool.name === 'set_demo_light')?.parameters.properties).not.toHaveProperty('temperature');
+    expect(homeTools.find(tool => tool.name === 'set_demo_air_purifier')?.parameters.properties).toEqual({ power: { type: 'boolean' } });
   });
 
   it('changes only simulated device state and rejects cross-device or malformed operations', () => {
     const home = initialSceneState('home');
     const meeting = initialSceneState('meeting');
     expect(runSceneTool(home, 'get_demo_devices', {})).toMatchObject({ simulated: true });
-    expect(runSceneTool(home, 'set_demo_device', { device_id: 'living_light', brightness: 50 })).toMatchObject({ simulated: true, changed: { brightness: 50 } });
+    expect(runSceneTool(home, 'set_demo_light', { brightness: 50 })).toMatchObject({ simulated: true, changed: { brightness: 50 } });
     expect(home.devices?.[0].brightness).toBe(50);
+    expect(runSceneTool(home, 'set_demo_air_conditioner', { power: true, temperature: 24 })).toMatchObject({ simulated: true, changed: { id: 'air_conditioner', power: true, temperature: 24 } });
+    expect(home.devices?.[1]).toMatchObject({ power: true, temperature: 24 });
+    expect(runSceneTool(home, 'set_demo_air_purifier', { power: false })).toMatchObject({ simulated: true, changed: { id: 'air_purifier', power: false } });
     expect(initialSceneState('home').devices?.[0].brightness).toBe(80);
-    expect(() => runSceneTool(home, 'set_demo_device', { device_id: 'living_light', temperature: 25 })).toThrow();
-    expect(() => runSceneTool(home, 'set_demo_device', { device_id: 'air_conditioner', temperature: 100 })).toThrow();
-    expect(() => runSceneTool(home, 'set_demo_device', { device_id: 'living_light', power: true, authorization: 'x' })).toThrow();
-    expect(() => runSceneTool(meeting, 'set_demo_device', { device_id: 'living_light', power: true })).toThrow();
+    expect(() => runSceneTool(home, 'set_demo_light', { temperature: 25 })).toThrow();
+    expect(() => runSceneTool(home, 'set_demo_air_conditioner', { temperature: 100 })).toThrow();
+    expect(() => runSceneTool(home, 'set_demo_air_conditioner', { power: true, brightness: 0, temperature: 24 })).toThrow('亮度只能是客厅灯');
+    expect(() => runSceneTool(home, 'set_demo_light', { power: true, authorization: 'x' })).toThrow();
+    expect(() => runSceneTool(meeting, 'set_demo_air_conditioner', { power: true })).toThrow();
   });
 
   it('bounds meeting notes and never performs a search through local demo tools', () => {
@@ -41,15 +50,15 @@ describe('scenario delegation', () => {
 
   it('returns recoverable tool errors without mutating state, then accepts a corrected call', () => {
     const home = initialSceneState('home');
-    const invalid = evaluateSceneCall(home, 'set_demo_device', '{"device_id":"living_light","power":false,"brightness":80,"temperature":24}');
+    const invalid = evaluateSceneCall(home, 'set_demo_light', '{"power":false,"brightness":80,"temperature":24}');
     expect(invalid.state).toBe(home);
     expect(JSON.parse(invalid.output)).toMatchObject({ ok: false, retryable: true, error: '温度只能是空调的 18–30 整数' });
     expect(home.devices?.[0].power).toBe(true);
-    const corrected = evaluateSceneCall(invalid.state, 'set_demo_device', '{"device_id":"living_light","power":false}');
+    const corrected = evaluateSceneCall(invalid.state, 'set_demo_light', '{"power":false}');
     expect(JSON.parse(corrected.output)).toMatchObject({ simulated: true, changed: { power: false } });
     expect(corrected.state.devices?.[0].power).toBe(false);
     expect(home.devices?.[0].power).toBe(true);
-    expect(JSON.parse(evaluateSceneCall(home, 'set_demo_device', '{bad').output).ok).toBe(false);
+    expect(JSON.parse(evaluateSceneCall(home, 'set_demo_light', '{bad').output).ok).toBe(false);
     expect(JSON.parse(evaluateSceneCall(home, 'unknown_tool', '{}').output).ok).toBe(false);
   });
 });

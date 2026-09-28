@@ -129,7 +129,7 @@ test('home scene shows automatic simulated changes and recoverable tool errors',
     socket.send(JSON.stringify({ type: 'studio.scene.state', state: { scene: 'home', devices: [{ id: 'living_light', name: '客厅灯', power: true, brightness: 80 }] }, _seq: 2 }));
     socket.send(JSON.stringify({ type: 'session.delegation.created', delegation: { id: 'home-1', target: 'responses' }, offset_ms: 0, _seq: 3 }));
     socket.send(JSON.stringify({ type: 'response.event', delegation_id: 'home-1', event: { type: 'response.completed', response: { output: [{ type: 'function_call' }] } }, _seq: 4 }));
-    socket.send(JSON.stringify({ type: 'studio.tools', calls: [{ callId: 'call-1', delegationId: 'home-1', batchId: 'batch-1', name: 'set_demo_device', arguments: '{"device_id":"living_light","temperature":24}', state: 'submitted', output: '{"ok":false,"error":"温度只能是空调的 18–30 整数"}' }], _seq: 5 }));
+    socket.send(JSON.stringify({ type: 'studio.tools', calls: [{ callId: 'call-1', delegationId: 'home-1', batchId: 'batch-1', name: 'set_demo_light', arguments: '{"temperature":24}', state: 'submitted', output: '{"ok":false,"error":"温度只能是空调的 18–30 整数"}' }], _seq: 5 }));
     socket.send(JSON.stringify({ type: 'studio.response.continued', batch_id: 'home-1:batch-1', _seq: 6 }));
     socket.send(JSON.stringify({ type: 'studio.scene.state', state: { scene: 'home', devices: [{ id: 'living_light', name: '客厅灯', power: true, brightness: 50 }] }, _seq: 7 }));
   });

@@ -32,8 +32,9 @@ export function runSceneTool(state: SceneState, name: string, args: unknown): un
       if (Object.keys(args).length) throw new Error('查询设备不接受参数');
       return { simulated: true, devices: state.devices };
     }
-    const device = state.devices!.find(item => item.id === args.device_id);
-    if (!device || Object.keys(args).some(key => !['device_id', 'power', 'brightness', 'temperature'].includes(key))) throw new Error('设备或参数无效');
+    const deviceId = { set_demo_light: 'living_light', set_demo_air_conditioner: 'air_conditioner', set_demo_air_purifier: 'air_purifier' }[name];
+    const device = state.devices!.find(item => item.id === deviceId);
+    if (!device || Object.keys(args).some(key => !['power', 'brightness', 'temperature'].includes(key))) throw new Error('设备或参数无效');
     if (!('power' in args || 'brightness' in args || 'temperature' in args)) throw new Error('请指定要更改的状态');
     if ('power' in args && typeof args.power !== 'boolean') throw new Error('power 必须是布尔值');
     if ('brightness' in args && (device.id !== 'living_light' || !Number.isInteger(args.brightness) || args.brightness < 0 || args.brightness > 100)) throw new Error('亮度只能是客厅灯的 0–100 整数');

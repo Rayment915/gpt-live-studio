@@ -5,13 +5,15 @@ export type SceneId = typeof SCENE_IDS[number];
 
 export const SCENES = {
   home: {
-    title: '智能家居', example: '“把客厅灯调到一半亮度，再告诉我空调状态。”',
+    title: '智能家居', example: '“把空调打开调到 24 度，再把客厅灯调到一半亮度。”',
     notice: '设备和状态均为模拟；服务器校验后自动执行，不会控制真实家电。',
     instructions: '你是实时智能家居语音助手。家电全部为模拟设备。可以边倾听边回应，但只有工具结果确认后才能说操作已经完成；永远明确说明这是模拟操作。',
-    backend: '查询模拟设备状态，按用户意图调用已列出的工具。不要声称控制了真实家电。仅向对应设备传递适用字段：亮度只用于客厅灯，温度只用于空调。工具返回错误时修正参数重试；仅在收到成功结果后声称已完成。',
+    backend: '查询模拟设备状态，按用户意图调用对应设备的专属工具。空调开机与设定温度可以在同一次 set_demo_air_conditioner 调用中完成；亮度只用于客厅灯。不要声称控制了真实家电。工具返回错误时修正参数，不要原样重复失败的调用；仅在收到成功结果后声称已完成。',
     tools: [
       { type: 'function', name: 'get_demo_devices', description: '查看当前会话内的模拟家电状态。', parameters: { type: 'object', properties: {}, additionalProperties: false } },
-      { type: 'function', name: 'set_demo_device', description: '调整模拟家电；仅传需要修改的字段。brightness 只适用于 living_light，temperature 只适用于 air_conditioner；服务端自动校验执行。', parameters: { type: 'object', properties: { device_id: { type: 'string', enum: ['living_light', 'air_conditioner', 'air_purifier'] }, power: { type: 'boolean' }, brightness: { type: 'integer', minimum: 0, maximum: 100 }, temperature: { type: 'integer', minimum: 18, maximum: 30 } }, required: ['device_id'], additionalProperties: false } },
+      { type: 'function', name: 'set_demo_light', description: '调整模拟客厅灯。可设置开关 power 或亮度 brightness（0–100）；只传需要更改的字段。', parameters: { type: 'object', properties: { power: { type: 'boolean' }, brightness: { type: 'integer', minimum: 0, maximum: 100 } }, additionalProperties: false } },
+      { type: 'function', name: 'set_demo_air_conditioner', description: '调整模拟空调。可同时开机（power: true）并设置温度 temperature（18–30 摄氏度）；不要传亮度。', parameters: { type: 'object', properties: { power: { type: 'boolean' }, temperature: { type: 'integer', minimum: 18, maximum: 30 } }, additionalProperties: false } },
+      { type: 'function', name: 'set_demo_air_purifier', description: '调整模拟空气净化器的开关 power；不支持温度和亮度。', parameters: { type: 'object', properties: { power: { type: 'boolean' } }, required: ['power'], additionalProperties: false } },
     ],
   },
   meeting: {
