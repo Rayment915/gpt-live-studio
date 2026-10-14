@@ -107,3 +107,12 @@
 - 浏览器串行回归 15 通过、1 跳过（密码模式用例）；独立密码模式登录/退出用例 1/1 通过。首次并发运行一项模拟麦克风用例超时，单独和串行完整复验均通过。
 - ACR 构建 `cmq` 成功，应用镜像 `gpt-live-studio:iq-20261015-1`。
 - 本条记录仅确认提示词和提交的会话参数，不将提示词要求等同于已验证主动播放开场白。
+
+本次真实 Azure 与生产验证（2026-10-15，Asia/Shanghai）：
+
+- 隔离 Job `gpt-live-release-smoke-5zmpwpj` 成功：Markdown / Word 均 ready 且 indexed；旧 auto/full 返回400，准确校验新默认提示词。
+- Live + Luna 托管委派通过真实 IQ 返回“7300元、14天”，引用 DOCX 转换后第1页和 Markdown 第1行；来源事件1次、语音数据80次、会话正常关闭、错误0。
+- 测试使用独立 Blob 容器与索引前缀 `gpt-live-iq-smoke-20261015`；文档、容器、Knowledge Base / Source / Index 均清理完成。正式工作台和本机资料未参与测试。
+- 生产版本 `gpt-live-studio-prod--iq-20261015-1`：Healthy / Provisioned，镜像 `rtpsr678b10.azurecr.io/gpt-live-studio:iq-20261015-1`，1个副本。
+- 健康接口200；未登录 `/api/config` 和 `/api/knowledge` 均401；旧入口302跳转保留。环境变量（包括 secretRef）、认证配置、托管身份、伸缩与网络环境均保持一致。
+- 本轮未重新验证真实麦克风或 WebRTC 云端音频；本地浏览器回归使用模拟设备，真实云端音频验收使用 WebSocket 与合成静音输入。
