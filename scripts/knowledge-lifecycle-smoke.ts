@@ -42,7 +42,7 @@ try {
   assert.deepEqual((await state()).documents.map((d: any) => d.id), ready.documents.map((d: any) => d.id));
   passed('worker restart preserves ready document IDs');
   const id = ready.documents[0].id;
-  const sessionResponse = await fetch(`${origin}/api/sessions`, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ scene: 'knowledge', transport: 'websocket', session: sceneConfig('knowledge', { ...DEFAULT_CONFIG, model: config.deployment }, config.responsesDeployment), knowledge: { mode: 'full', revision: (await state()).revision } }) });
+  const sessionResponse = await fetch(`${origin}/api/sessions`, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ scene: 'knowledge', transport: 'websocket', session: sceneConfig('knowledge', { ...DEFAULT_CONFIG, model: config.deployment }, config.responsesDeployment), knowledge: { mode: 'iq', revision: (await state()).revision } }) });
   assert.equal(sessionResponse.status, 200);
   const session = await sessionResponse.json();
   const socket = new WebSocket(`${origin.replace('http', 'ws')}/api/sessions/${session.id}/events`, { headers });

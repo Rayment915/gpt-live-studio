@@ -6,7 +6,8 @@ import { sceneConfig } from '../shared/scenarios';
 import type { KnowledgeMode } from '../shared/knowledge';
 
 const origin = process.env.STUDIO_TEST_ORIGIN ?? 'http://localhost:3000';
-const mode = (process.argv[2] ?? 'full') as KnowledgeMode;
+const mode = (process.argv[2] ?? 'iq') as KnowledgeMode;
+if (mode !== 'iq') throw new Error('Only Foundry IQ is supported');
 const response = await fetch(`${origin}/api/config`);
 const cookie = response.headers.get('set-cookie')!.split(';')[0];
 const config = await response.json();

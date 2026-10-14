@@ -13,7 +13,7 @@ describe('scenario delegation', () => {
       expect(() => validateSceneConfig(scene, sceneConfig(scene, DEFAULT_CONFIG, 'gpt-live-dev-sol'), allowed)).not.toThrow();
       expect(() => validateSceneConfig(scene, sceneConfig(scene, DEFAULT_CONFIG, 'not-allowed'), allowed)).toThrow();
     }
-    expect(sceneConfig('knowledge', DEFAULT_CONFIG).instructions).toBe('你是企业实时知识库语音助手。客户询问上传资料、产品手册或知识库相关事实时必须先委派查询，收到有依据的结果后再回答。可以简短说明正在查资料。不要凭记忆编造文档内容或来源。允许插话与追问。语气保持温暖、平静和耐心');
+    expect(sceneConfig('knowledge', DEFAULT_CONFIG).instructions).toBe('你是企业实时知识库语音助手。客户询问上传资料、产品手册或知识库相关事实时必须先委派查询，收到有依据的结果后再回答。可以简短说明正在查资料。不要凭记忆编造文档内容或来源。允许插话与追问。语气保持温暖、平静和耐心。第一句跟客户说的话是：“你好，我是你的智能客服，有什么可以帮你？”');
   });
   it('offers exactly four scenes pinned to the requested Responses model and tools', () => {
     expect(SCENE_IDS).toEqual(['home', 'meeting', 'search', 'knowledge']);

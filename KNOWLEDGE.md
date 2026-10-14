@@ -2,6 +2,8 @@
 
 本地实现与首次生产发布准备于 2026-10-14。本文保留本机运行方法；生产环境使用独立 Blob 存储和 Container Apps Job，详见 [生产发布指南](PRODUCTION.md)。本机与生产文档互相隔离。
 
+知识库场景提示词包含固定开场白要求：“你好，我是你的智能客服，有什么可以帮你？”；其他场景保持各自的提示词。
+
 ## 当前运行方式
 
 访问 `http://localhost:3000`，选择第四个场景“知识库问答”。每个工作台共享一套持久知识库，最多三份文档，每份 20 MiB；处理中、失败和清理失败的文档均占名额。支持 `.doc/.docx/.pdf/.ppt/.pptx/.md/.markdown/.txt`。
@@ -58,27 +60,24 @@ npm run dev
 
 Azure Blob 需要 `Storage Blob Data Contributor`；OCR 需要 `Cognitive Services User`；Embedding 需要 `Cognitive Services OpenAI User`。Search 的系统托管身份也需要调用开发 Embedding 部署的权限。开发 Search 已启用语义检索。不要将服务密钥传给浏览器。
 
-四个场景由服务器校验工具清单和委派部署白名单。默认 Luna、`reasoning.effort=low`、`service_tier=default`、`parallel_tool_calls=true`，界面可选 Sol；任何模型错误直接显示，不自动换模型。载入预设保留白名单内的模型和显式设置，不可用模型迁移到默认部署。应用全文预算独立于模型上下文上限，不能把支持大上下文理解为应该每次发送 1M tokens。
+四个场景由服务器校验工具清单和委派部署白名单。默认 Luna、`reasoning.effort=low`、`service_tier=default`、`parallel_tool_calls=true`，界面可选 Sol；任何模型错误直接显示，不自动换模型。载入预设保留白名单内的模型和显式设置，不可用模型迁移到默认部署。知识库只支持 Foundry IQ，旧客户端提交 auto/full 会被拒绝。
 
 ## 架构
 
 ```mermaid
 flowchart TB
   subgraph Local[本机开发]
-    UI[浏览器：四场景 / 上传 / 模式 / 状态 / 删除]
+    UI[浏览器：四场景 / 上传 / Foundry IQ / 状态 / 删除]
     Node[Node API：认证 + Origin + CSRF / 会话绑定 / 异步工具]
     Blob[Azurite：原文 / 正文 / 预览 PDF / CAS 任务清单]
     Worker[独立 worker：租约 / 重启恢复 / 三次重试]
     Office[LibreOffice + 项目 .venv 格式校验]
-    Router{search_knowledge 路由}
-    Full[完整正文 + 页码或行号]
+    Router[search_knowledge：校验版本与索引]
     UI -->|流式 multipart ≤20 MiB| Node
     Node -->|原子预留：最多3份| Blob
     Blob --> Worker
     Worker --> Office
     Node --> Router
-    Router -->|auto小文档或full| Full
-    Blob --> Full
   end
   subgraph SG[Azure Singapore：开发 RAG]
     OCR[Document Intelligence Layout]
@@ -97,7 +96,6 @@ flowchart TB
     Sol[Responses：默认 GPT-6-luna / 可选 GPT-6.1-Sol]
     Live -->|托管委派| Sol
     Sol -->|search_knowledge 调用| Node
-    Full -->|正文证据| Sol
     IQ -->|最多6段证据，经Node校验| Sol
     Sol -->|有据回答| Live
   end
@@ -115,17 +113,15 @@ Singapore 是 RAG 资源所在地；Sol 在现有 East US 2 Foundry 资源中使
 2. worker 独立运行，Blob 租约保证单一消费者，任务和失败次数持久化。重启后恢复处理中的任务；上传中断超过五分钟会标记失败。
 3. Office 本地转 PDF；PDF/扫描 PDF 调用 Layout；文本直接解码 UTF-8。解析一次，保存完整正文及位置，再生成检索片段。Office 页面位置标注为“转换后第 N 页”。
 4. IQ 使用正式 API `2026-04-01`，调用真实 `knowledgesources`、`knowledgebases` 与 `retrieve`。最小检索使用 semantic intent，所选 Responses 模型承担问题改写和回答。索引包含向量搜索配置与向量化器。
-5. 会话绑定 generation、文档 ID 集合、revision 和 mode。新增资料只进入下一次会话；检索 filter 限定会话中的文档 ID。全文已经完成但索引失败时，仍可使用全文模式。
+5. 会话绑定 generation、文档 ID 集合、revision 和 mode。新增资料只进入下一次会话；检索 filter 限定会话中的文档 ID。正文解析完成但索引未就绪时，拒绝开始问答并提示等待处理完成。
 
 每次上传的 UUID 同时作为不可变文档版本；不允许原位替换内容。同名文件重新上传也会得到新版本。证据和索引均带 `document_version`，旧开发清单兼容使用其原有文档 ID 作为版本。
 
 | 模式 | 行为 |
 |---|---|
-| 自动 | 正文估算 ≤32K tokens 且序列化结果 ≤1 MiB 时用全文，否则 IQ |
-| 全文 | 上限约128K tokens、工具结果1 MiB；超限明确提示切换IQ，不截断正文 |
 | Foundry IQ | 索引未就绪则拒绝；检索结果按chunk ID去重，最多6段、估算12K tokens |
 
-Token 预算用 UTF-8 字节数/2保守估算，非模型 tokenizer 精确值。全文结果有实际 JSON 字节预算检查。所有证据包含真实 source_id、文档、页码或行号。文档指令被视为不可信内容，回答提示要求指出资料冲突与无证据情况。
+Token 预算用 UTF-8 字节数/2保守估算，非模型 tokenizer 精确值。所有证据包含真实 source_id、文档、页码或行号。文档指令被视为不可信内容，回答提示要求指出资料冲突与无证据情况。
 
 工具调用保留 call_id/delegation_id/batch 关联；异步完成后沿既有协议提交并续跑。浏览器只收候选来源元数据，完整正文不写入调试事件或工具日志。来源链接由后端生成，知识库场景不采用模型生成的 URL 引用。回答文字与语音可能包含引用的文档内容；“正文不进入日志”不等于隐藏用户实际收到的答案。
 
@@ -163,9 +159,8 @@ soffice --headless --convert-to ppt --outdir output/knowledge-fixtures output/kn
 # 以下调用真实开发服务，会产生云服务费用
 node --import tsx scripts/knowledge-parser-smoke.ts
 node --import tsx scripts/knowledge-lifecycle-smoke.ts
-node --import tsx scripts/knowledge-live-smoke.ts full
 node --import tsx scripts/knowledge-live-smoke.ts iq
-# 补充独立 Responses 全文验证；不等同于 Live 托管委派验收
+# 补充独立 Responses + IQ 检索验证；不等同于 Live 托管委派验收
 node --import tsx scripts/knowledge-model-smoke.ts
 node --import tsx scripts/scene-smoke.ts home
 node --import tsx scripts/scene-smoke.ts meeting

@@ -218,7 +218,7 @@ async function runKnowledgeTool(live: Live, callId: string, name: string, argume
     const signal = AbortSignal.any([live.knowledgeAbort.signal, AbortSignal.timeout(60_000)]);
     const { mode, evidence } = await abortable((async () => {
       const mode = await knowledge!.resolveMode(snapshot);
-      const evidence = mode === 'full' ? await knowledge!.fullEvidence(snapshot) : await azureKnowledge.retrieve(snapshot, args.query, signal);
+      const evidence = await azureKnowledge.retrieve(snapshot, args.query, signal);
       await knowledge!.validate(snapshot);
       return { mode, evidence };
     })(), signal);
@@ -324,7 +324,7 @@ app.post('/api/sessions', async (request, response) => {
     const scene = request.body.scene;
     if (scene !== undefined && !isSceneId(scene)) throw new Error('未知场景');
     if (scene) validateSceneConfig(scene, config, responsesDeployments);
-    const snapshot = scene === 'knowledge' ? await knowledge?.snapshot(request.body.knowledge?.mode ?? 'auto', request.body.knowledge?.revision) : undefined;
+    const snapshot = scene === 'knowledge' ? await knowledge?.snapshot(request.body.knowledge?.mode ?? 'iq', request.body.knowledge?.revision) : undefined;
     if (scene === 'knowledge' && !snapshot) throw new Error('请先配置开发知识库');
     const transport = request.body.transport as Transport;
     if (!['webrtc', 'websocket'].includes(transport)) throw new Error('transport 必须是 webrtc 或 websocket');

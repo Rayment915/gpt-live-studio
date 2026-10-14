@@ -17,12 +17,13 @@ test('knowledge UI uploads, binds mode/revision, and confirms deletion', async (
   await page.goto('/'); await page.getByRole('button', { name: '知识库问答', exact: true }).click();
   await page.getByLabel('上传知识库文档').setInputFiles({ name: '规则.md', mimeType: 'text/markdown', buffer: Buffer.from('借用14天') });
   await expect(page.getByText('IQ 已就绪', { exact: false })).toBeVisible();
-  await page.getByLabel('知识库回答方式').selectOption('iq');
+  await expect(page.getByLabel('知识库回答方式')).toHaveText('回答方式：Foundry IQ 检索');
+  await expect(page.getByRole('combobox', { name: '知识库回答方式' })).toHaveCount(0);
   await page.getByRole('button', { name: 'WebSocket', exact: true }).click(); await page.getByLabel('输入源').selectOption('file');
   await page.getByRole('button', { name: '开始体验' }).click();
   await expect.poll(() => submitted?.knowledge).toEqual({ mode: 'iq', revision: 2 });
   expect(submitted.session.delegation.responses.model).toBe('gpt-live-dev-sol');
-  await expect(page.getByLabel('知识库回答方式')).toBeDisabled();
+  await expect(page.getByLabel('知识库回答方式')).toHaveText('回答方式：Foundry IQ 检索');
   await page.getByRole('button', { name: '删除 规则.md', exact: true }).click();
   await expect(page.getByRole('alertdialog')).toBeVisible(); expect(deletes).toBe(0);
   await page.getByRole('button', { name: '确认删除并结束相关会话' }).click();
@@ -50,6 +51,7 @@ test('default prompt, full voice list, model selection and presets reach session
   await page.route('**/api/sessions', route => { submitted = route.request().postDataJSON(); return route.fulfill({ status: 429, json: { error: 'synthetic stop after payload validation' } }); });
   await page.goto('/');
   await expect(page.getByRole('button', { name: '知识库问答', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  expect(DEFAULT_LIVE_PROMPT).toBe('你是企业实时知识库语音助手。客户询问上传资料、产品手册或知识库相关事实时必须先委派查询，收到有依据的结果后再回答。可以简短说明正在查资料。不要凭记忆编造文档内容或来源。允许插话与追问。语气保持温暖、平静和耐心。第一句跟客户说的话是：“你好，我是你的智能客服，有什么可以帮你？”');
   await expect(page.getByLabel('让模型如何与你交流')).toHaveValue(DEFAULT_LIVE_PROMPT);
   await expect(page.getByLabel('委派模型部署')).toHaveValue('gpt-6-luna');
   expect(await page.locator('#voice option').evaluateAll(options => options.map(option => (option as HTMLOptionElement).value))).toEqual([...LIVE_VOICES]);

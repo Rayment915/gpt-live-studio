@@ -9,7 +9,6 @@ import { Waveform } from './components/Waveform';
 import { LiveClient } from './lib/client';
 import { emptyState, groupTranscripts, reduceEvent } from './lib/state';
 import { KnowledgePanel } from './components/KnowledgePanel';
-import type { KnowledgeMode } from '../shared/knowledge';
 
 type PublicConfig = { configured: boolean; endpoint: string; deployment: string; responsesDeployment: string; responsesDeployments?: string[]; csrf: string; authMode?: string; defaultConfig: SessionConfig; maxSessionSeconds: number };
 type Status = 'idle' | 'connecting' | 'live' | 'closing' | 'ended';
@@ -20,7 +19,6 @@ export function App() {
   const [connection, setConnection] = useState<PublicConfig>();
   const [config, setConfig] = useState<SessionConfig>(DEFAULT_CONFIG);
   const [scene, setScene] = useState<SceneId>('knowledge');
-  const [knowledgeMode, setKnowledgeMode] = useState<KnowledgeMode>('auto');
   const [knowledgeRevision, setKnowledgeRevision] = useState<number>();
   const [json, setJsonValue] = useState(JSON.stringify(DEFAULT_CONFIG, null, 2));
   const [jsonError, setJsonError] = useState('');
@@ -116,7 +114,7 @@ export function App() {
       validateSceneConfig(scene, valid, connection!.responsesDeployment);
       startConfig.current = structuredClone(valid);
       started.current = Date.now();
-      await current.start(valid, transport, micDevice, inputSource, scene, scene === 'knowledge' ? { mode: knowledgeMode, revision: knowledgeRevision } : undefined);
+      await current.start(valid, transport, micDevice, inputSource, scene, scene === 'knowledge' ? { mode: 'iq', revision: knowledgeRevision } : undefined);
       if (current.disposed) return;
       if (outputDevice) await current.audio.outputDevice(outputDevice).catch(reason => setNotice(String(reason)));
       setStatus('live'); waveformTick(value => value + 1); await refreshDevices();
@@ -159,7 +157,7 @@ export function App() {
       {connection && !connection.configured && <div className="alert warning"><Info size={17} /><span>后端还未配置密钥。请填写项目 .env 中的 AZURE_OPENAI_API_KEY 并重启；不要将密钥填进前端 JSON。</span></div>}
       {error && <div className="alert error" role="alert"><Info size={17} /><span>{error}</span><button className="icon-button" onClick={() => setError('')} aria-label="关闭错误提示"><X size={16} /></button></div>}
       <div className="mobile-tabs" role="tablist" aria-label="工作区分区">{[['settings', '会话设置'], ['studio', '语音体验'], ['tasks', '委派任务']].map(([value, title]) => <button role="tab" aria-selected={tab === value} className={tab === value ? 'active' : ''} onClick={() => setTab(value)} key={value}>{title}</button>)}</div>
-      {scene === 'knowledge' && connection && <KnowledgePanel csrf={connection.csrf} mode={knowledgeMode} changeMode={setKnowledgeMode} locked={locked} onRevision={setKnowledgeRevision} />}
+      {scene === 'knowledge' && connection && <KnowledgePanel csrf={connection.csrf} locked={locked} onRevision={setKnowledgeRevision} />}
       <div className={`workspace-grid mobile-${tab}`}>
         <ConfigPanel config={config} change={changeConfig} scene={scene} chooseScene={chooseScene} transport={transport} setTransport={setTransport} inputSource={inputSource} setInputSource={setInputSource} locked={locked} update={updateResponses} notify={setNotice} responsesModel={defaultResponsesModel} responsesModels={responsesModels} json={json} setJson={editJson} jsonError={jsonError} />
         <section className="studio-panel panel" aria-label="语音体验"><div className="studio-topline"><div className={`session-status ${status}`}><span />{statusLabels[status]}</div><div className="session-clock"><Clock3 size={13} /><span>{formatTime(elapsed)}</span><span className="transport-tag">{transport === 'webrtc' ? 'WEBRTC' : 'WEBSOCKET'}</span></div></div>

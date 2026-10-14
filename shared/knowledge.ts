@@ -1,4 +1,4 @@
-export type KnowledgeMode = 'auto' | 'full' | 'iq';
+export type KnowledgeMode = 'iq';
 export type DocumentStatus = 'uploading' | 'queued' | 'processing' | 'ready' | 'failed' | 'deleting' | 'delete_failed';
 export type KnowledgeDocument = {
   id: string; name: string; extension: string; bytes: number; status: DocumentStatus;
@@ -17,9 +17,6 @@ export type ParsedDocument = { sections: { location: string; text: string }[]; t
 export const KNOWLEDGE_EXTENSIONS = ['.doc', '.docx', '.pdf', '.ppt', '.pptx', '.md', '.markdown', '.txt'];
 export const MAX_DOCUMENTS = 3;
 export const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
-export const FULL_AUTO_TOKENS = 32_000;
-export const FULL_MAX_TOKENS = 128_000;
-export const FULL_MAX_BYTES = 1024 * 1024;
 export function estimateTokens(text: string): number {
   return Math.ceil(BufferlessByteLength(text) / 2);
 }

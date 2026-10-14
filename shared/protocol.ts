@@ -13,7 +13,7 @@ export interface SessionConfig {
 export const DOCUMENTED_LIVE_VOICES = ['alloy', 'ash', 'ballad', 'beacon', 'bossa', 'brise', 'cedar', 'cinder', 'coral', 'delta', 'echo', 'flitz', 'gleam', 'harema', 'juni', 'marin', 'meridian', 'nira', 'noeul', 'nuri', 'quartz', 'ripple', 'sage', 'shida', 'shimmer', 'sillage', 'stone', 'tempo', 'verse', 'vesper', 'willow'] as const;
 // User-selected UI options, all verified on Azure gpt-live-1 on 2026-10-14.
 export const LIVE_VOICES = ['marin', 'quartz', 'vesper', 'willow', 'gleam', 'meridian'] as const;
-export const DEFAULT_LIVE_PROMPT = '你是企业实时知识库语音助手。客户询问上传资料、产品手册或知识库相关事实时必须先委派查询，收到有依据的结果后再回答。可以简短说明正在查资料。不要凭记忆编造文档内容或来源。允许插话与追问。语气保持温暖、平静和耐心';
+export const DEFAULT_LIVE_PROMPT = '你是企业实时知识库语音助手。客户询问上传资料、产品手册或知识库相关事实时必须先委派查询，收到有依据的结果后再回答。可以简短说明正在查资料。不要凭记忆编造文档内容或来源。允许插话与追问。语气保持温暖、平静和耐心。第一句跟客户说的话是：“你好，我是你的智能客服，有什么可以帮你？”';
 export const DEFAULT_RESPONSES_MODEL = 'gpt-6-luna';
 
 export const DEFAULT_CONFIG: SessionConfig = {

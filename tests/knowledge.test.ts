@@ -80,31 +80,32 @@ describe('persistent knowledge lifecycle', () => {
     await expect(service.reserve('fourth.txt')).rejects.toThrow('最多三份');
     expect((await new KnowledgeService(store).store.read()).manifest.documents).toHaveLength(3);
   });
-  it('routes small documents to full and preserves complete content and trusted links', async () => {
-    const { service } = await fixture(); const snapshot = await service.snapshot('auto');
-    expect(await service.resolveMode(snapshot)).toBe('full');
-    expect((await service.fullEvidence(snapshot))[0]).toMatchObject({ text: '设备可借用14天。', location: '第1行' });
+  it('uses IQ even for small documents without reading full text', async () => {
+    const { service, store } = await fixture();
+    store.files.clear();
+    const snapshot = await service.snapshot();
+    expect(snapshot.mode).toBe('iq');
+    expect(await service.resolveMode(snapshot)).toBe('iq');
   });
-  it('waits for IQ indexing and never substitutes a previous version', async () => {
+  it('rejects removed modes, including legacy clients', async () => {
+    const { service } = await fixture();
+    for (const mode of ['auto', 'full', 'unknown']) {
+      await expect(service.snapshot(mode as any)).rejects.toThrow('仅支持 Foundry IQ');
+    }
+  });
+  it('waits for IQ indexing and never falls back to parsed text', async () => {
     const { service } = await fixture('测试', false);
-    await expect(service.snapshot('iq')).rejects.toThrow('索引尚未就绪');
-    expect(await service.resolveMode(await service.snapshot('full'))).toBe('full');
+    await expect(service.snapshot()).rejects.toThrow('索引尚未就绪');
   });
-  it('rejects oversized forced full, automatically routes to IQ', async () => {
+  it('uses IQ for large documents without a full-document budget', async () => {
     const { service } = await fixture('大'.repeat(100_000));
-    await expect(service.snapshot('full')).rejects.toThrow('全文超过');
-    expect(await service.resolveMode(await service.snapshot('auto'))).toBe('iq');
-  });
-  it('enforces serialized byte budget without truncation', async () => {
-    const { service, store } = await fixture('\u0001'.repeat(200_000));
-    store.manifest.documents[0].tokens = 100_000;
-    await expect(service.snapshot('full')).rejects.toThrow('全文超过');
+    expect(await service.resolveMode(await service.snapshot())).toBe('iq');
   });
   it('binds sessions to documents and invalidates immediately on deletion', async () => {
-    const { service, store, document } = await fixture(); const snapshot = await service.snapshot('full');
+    const { service, store, document } = await fixture(); const snapshot = await service.snapshot('iq');
     await service.reserve('next.md');
     expect((await service.validate(snapshot)).map(d => d.id)).toEqual([document.id]);
-    await expect(service.snapshot('auto', snapshot.revision)).rejects.toThrow('已更新');
+    await expect(service.snapshot('iq', snapshot.revision)).rejects.toThrow('已更新');
     await service.markDelete(document.id);
     await expect(service.validate(snapshot)).rejects.toThrow('已删除');
     expect(await service.uploaded(document.id, 100)).toBe(false);

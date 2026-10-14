@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { extname, basename } from 'node:path';
-import { KNOWLEDGE_EXTENSIONS, MAX_DOCUMENTS, MAX_DOCUMENT_BYTES, readable, FULL_AUTO_TOKENS, FULL_MAX_TOKENS, FULL_MAX_BYTES, type KnowledgeSnapshot, type KnowledgeMode, type ParsedDocument, type Evidence } from '../../shared/knowledge.js';
-import { documentPrefix, mutate, type KnowledgeStore } from './store.js';
+import { KNOWLEDGE_EXTENSIONS, MAX_DOCUMENTS, MAX_DOCUMENT_BYTES, readable, type KnowledgeSnapshot, type KnowledgeMode } from '../../shared/knowledge.js';
+import { mutate, type KnowledgeStore } from './store.js';
 
 export class KnowledgeService {
   constructor(public store: KnowledgeStore) {}
@@ -29,8 +29,8 @@ export class KnowledgeService {
       return true;
     });
   }
-  async snapshot(mode: KnowledgeMode, revision?: number): Promise<KnowledgeSnapshot> {
-    if (!['auto', 'full', 'iq'].includes(mode)) throw new Error('知识库问答模式无效');
+  async snapshot(mode: KnowledgeMode = 'iq', revision?: number): Promise<KnowledgeSnapshot> {
+    if (mode !== 'iq') throw new Error('知识库仅支持 Foundry IQ 问答');
     const { manifest } = await this.store.read();
     if (manifest.deleting) throw new Error('知识库正在删除');
     if (revision !== undefined && revision !== manifest.revision) throw new Error('知识库已更新，请刷新后重新开始');
@@ -45,26 +45,10 @@ export class KnowledgeService {
     if (manifest.deleting || manifest.generation !== snapshot.generation || snapshot.documentIds.some(id => !manifest.documents.some(item => item.id === id && readable(item)))) throw new Error('知识库资料已删除或失效，请重新开始会话');
     return manifest.documents.filter(item => snapshot.documentIds.includes(item.id));
   }
-  async fullEvidence(snapshot: KnowledgeSnapshot): Promise<Evidence[]> {
-    const documents = await this.validate(snapshot);
-    const evidence: Evidence[] = [];
-    for (const document of documents) {
-      const parsed: ParsedDocument = JSON.parse((await this.store.get(`${documentPrefix(snapshot.generation, document.id)}parsed.json`)).toString());
-      for (const section of parsed.sections) evidence.push({ source_id: `S${evidence.length + 1}`, document_id: document.id, document_version: document.version ?? document.id, title: document.name, location: section.location, text: section.text, url: `/api/knowledge/documents/${document.id}/content${parsed.preview ? '?preview=1' : ''}` });
-    }
-    return evidence;
-  }
   async resolveMode(snapshot: KnowledgeSnapshot) {
+    if (snapshot.mode !== 'iq') throw new Error('知识库仅支持 Foundry IQ 问答');
     const documents = await this.validate(snapshot);
-    const tokens = documents.reduce((total, item) => total + (item.tokens ?? Infinity), 0);
-    let fullFits = false;
-    if (snapshot.mode !== 'iq' && tokens <= (snapshot.mode === 'auto' ? FULL_AUTO_TOKENS : FULL_MAX_TOKENS)) {
-      const evidence = await this.fullEvidence(snapshot);
-      fullFits = Buffer.byteLength(JSON.stringify({ status: 'ok', mode: 'full', evidence })) <= FULL_MAX_BYTES;
-    }
-    if (snapshot.mode === 'full' && !fullFits) throw new Error('全文超过应用预算（约 128K tokens / 1 MiB），请选择 Foundry IQ');
-    if (fullFits) return 'full' as const;
-    if (documents.some(item => !item.indexed)) throw new Error('Foundry IQ 索引尚未就绪，请等待处理完成或选择全文问答');
+    if (documents.some(item => !item.indexed)) throw new Error('Foundry IQ 索引尚未就绪，请等待处理完成');
     return 'iq' as const;
   }
   async markDelete(id?: string) {
