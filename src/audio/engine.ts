@@ -50,7 +50,7 @@ export class AudioEngine {
     await this.context!.audioWorklet.addModule('/pcm-worklet.js');
     this.capture = new AudioWorkletNode(this.context!, 'pcm-capture');
     this.capture.port.onmessage = ({ data }: MessageEvent<Float32Array>) => {
-      if (!this.uploading && !this.muted) send(encodeAudio(floatToPcm(data)));
+      if (!this.uploading) send(encodeAudio(floatToPcm(this.muted ? new Float32Array(data.length) : data)));
     };
     this.inputSource!.connect(this.capture);
     this.capture.connect(this.context!.destination);
@@ -75,6 +75,10 @@ export class AudioEngine {
     this.remoteAudio.muted = this.speakerIsMuted;
     this.remoteAudio.srcObject = stream;
     await this.remoteAudio.play();
+  }
+
+  stopCapture() {
+    if (this.capture) { this.capture.port.onmessage = null; this.capture.disconnect(); }
   }
 
   play(base64: string, startMs: number) {
@@ -138,8 +142,7 @@ export class AudioEngine {
     this.microphoneGeneration++;
     this.cancelUpload();
     this.stream?.getTracks().forEach(track => track.stop());
-    this.capture?.disconnect();
-    if (this.capture) this.capture.port.onmessage = null;
+    this.stopCapture();
     this.inputSource?.disconnect(); this.remote?.disconnect(); this.remoteMonitor?.disconnect();
     this.remoteAudio?.pause();
     if (this.remoteAudio) this.remoteAudio.srcObject = null;

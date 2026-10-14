@@ -8,9 +8,17 @@ export interface SessionConfig {
   delegation?: { type: 'client' } | { type: 'responses'; responses: Record<string, any> } | null;
 }
 
+// Built-in enum from the GPT-Live session API (verified 2026-10-14).
+// https://developers.openai.com/api/reference/resources/live/methods/create
+export const DOCUMENTED_LIVE_VOICES = ['alloy', 'ash', 'ballad', 'beacon', 'bossa', 'brise', 'cedar', 'cinder', 'coral', 'delta', 'echo', 'flitz', 'gleam', 'harema', 'juni', 'marin', 'meridian', 'nira', 'noeul', 'nuri', 'quartz', 'ripple', 'sage', 'shida', 'shimmer', 'sillage', 'stone', 'tempo', 'verse', 'vesper', 'willow'] as const;
+// User-selected UI options, all verified on Azure gpt-live-1 on 2026-10-14.
+export const LIVE_VOICES = ['marin', 'quartz', 'vesper', 'willow', 'gleam', 'meridian'] as const;
+export const DEFAULT_LIVE_PROMPT = '你是企业实时知识库语音助手。客户询问上传资料、产品手册或知识库相关事实时必须先委派查询，收到有依据的结果后再回答。可以简短说明正在查资料。不要凭记忆编造文档内容或来源。允许插话与追问。语气保持温暖、平静和耐心';
+export const DEFAULT_RESPONSES_MODEL = 'gpt-6-luna';
+
 export const DEFAULT_CONFIG: SessionConfig = {
   model: 'gpt-live-1',
-  instructions: '请用自然、简洁的中文与我交流。认真倾听，允许我随时插话。需要查询信息或使用工具时委派任务；外部操作先征得我的同意。',
+  instructions: DEFAULT_LIVE_PROMPT,
   audio: { output: { voice: 'marin' } },
   delegation: { type: 'client' },
 };
@@ -59,6 +67,7 @@ export function validateConfig(value: unknown): SessionConfig {
     if (delegation.type === 'responses') {
       if (!object(delegation.responses) || typeof delegation.responses.model !== 'string' || !delegation.responses.model.trim()) throw new Error('Responses 委派需要 model 部署名');
       const settings = delegation.responses;
+      if (settings.parallel_tool_calls !== undefined && typeof settings.parallel_tool_calls !== 'boolean') throw new Error('parallel_tool_calls 必须是布尔值');
       if (settings.service_tier !== undefined && !['auto', 'default', 'flex', 'priority'].includes(settings.service_tier)) throw new Error('service_tier 无效');
       if (settings.max_output_tokens !== undefined && (!Number.isInteger(settings.max_output_tokens) || settings.max_output_tokens < 1)) throw new Error('max_output_tokens 必须是正整数');
       if (settings.tools !== undefined && (!Array.isArray(settings.tools) || !settings.tools.every((tool: unknown) => object(tool) && typeof tool.type === 'string'))) throw new Error('tools 必须是工具对象数组');

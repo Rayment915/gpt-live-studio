@@ -23,7 +23,7 @@ async function run(mode: 'client' | 'responses') {
     const started = Date.now();
     const send = (event: Event) => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ event_id: randomUUID(), ...event })); };
     const timeout = setTimeout(() => socket.terminate(), 35_000);
-    socket.on('open', () => send({ type: 'session.start', session: { ...DEFAULT_CONFIG, model: process.env.AZURE_OPENAI_DEPLOYMENT ?? 'gpt-live-1', instructions: '请用中文简短说你好。', delegation: mode === 'client' ? { type: 'client' } : { type: 'responses', responses: { model: process.env.RESPONSES_DEPLOYMENT ?? 'gpt-5.4', tools: DEMO_TOOLS, tool_choice: 'auto', parallel_tool_calls: true } } } }));
+    socket.on('open', () => send({ type: 'session.start', session: { ...DEFAULT_CONFIG, model: process.env.AZURE_OPENAI_DEPLOYMENT ?? 'gpt-live-1', instructions: '请用中文简短说你好。', delegation: mode === 'client' ? { type: 'client' } : { type: 'responses', responses: { model: process.env.RESPONSES_DEPLOYMENT ?? 'gpt-6-luna', tools: DEMO_TOOLS, tool_choice: 'auto', service_tier: 'default', parallel_tool_calls: true } } } }));
     socket.on('message', data => {
       const event = JSON.parse(data.toString()) as Event;
       counts[event.type] = (counts[event.type] ?? 0) + 1;
@@ -36,7 +36,7 @@ async function run(mode: 'client' | 'responses') {
         send({ type: 'session.input_audio.mute' });
         send({ type: 'session.input_audio.unmute' });
         if (mode === 'responses') {
-          send({ type: 'session.update', session: { delegation: { type: 'responses', responses: { model: process.env.RESPONSES_DEPLOYMENT ?? 'gpt-5.4', tools: DEMO_TOOLS, tool_choice: 'auto', parallel_tool_calls: true } } } });
+          send({ type: 'session.update', session: { delegation: { type: 'responses', responses: { model: process.env.RESPONSES_DEPLOYMENT ?? 'gpt-6-luna', tools: DEMO_TOOLS, tool_choice: 'auto', service_tier: 'default', parallel_tool_calls: true } } } });
           send({ type: 'response.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '请调用 get_current_time 查询 Asia/Shanghai 当前时间。' }] } });
           send({ type: 'response.create' });
         }

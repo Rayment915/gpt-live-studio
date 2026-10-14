@@ -8,8 +8,10 @@ import { EventConsole } from './components/EventConsole';
 import { Waveform } from './components/Waveform';
 import { LiveClient } from './lib/client';
 import { emptyState, groupTranscripts, reduceEvent } from './lib/state';
+import { KnowledgePanel } from './components/KnowledgePanel';
+import type { KnowledgeMode } from '../shared/knowledge';
 
-type PublicConfig = { configured: boolean; endpoint: string; deployment: string; responsesDeployment: string; csrf: string; authMode?: string; defaultConfig: SessionConfig; maxSessionSeconds: number };
+type PublicConfig = { configured: boolean; endpoint: string; deployment: string; responsesDeployment: string; responsesDeployments?: string[]; csrf: string; authMode?: string; defaultConfig: SessionConfig; maxSessionSeconds: number };
 type Status = 'idle' | 'connecting' | 'live' | 'closing' | 'ended';
 const statusLabels: Record<Status, string> = { idle: '准备就绪', connecting: '正在连接', live: '会话进行中', closing: '正在结束', ended: '会话已结束' };
 const formatTime = (seconds: number) => `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
@@ -17,7 +19,9 @@ const formatTime = (seconds: number) => `${String(Math.floor(seconds / 60)).padS
 export function App() {
   const [connection, setConnection] = useState<PublicConfig>();
   const [config, setConfig] = useState<SessionConfig>(DEFAULT_CONFIG);
-  const [scene, setScene] = useState<SceneId>('home');
+  const [scene, setScene] = useState<SceneId>('knowledge');
+  const [knowledgeMode, setKnowledgeMode] = useState<KnowledgeMode>('auto');
+  const [knowledgeRevision, setKnowledgeRevision] = useState<number>();
   const [json, setJsonValue] = useState(JSON.stringify(DEFAULT_CONFIG, null, 2));
   const [jsonError, setJsonError] = useState('');
   const [transport, setTransport] = useState<Transport>('webrtc');
@@ -47,10 +51,13 @@ export function App() {
   const waveformTick = useState(0)[1];
   const active = status === 'live';
   const locked = ['connecting', 'live', 'closing'].includes(status);
+  const defaultResponsesModel = connection?.responsesDeployment ?? 'gpt-6-luna';
+  const responsesModels = connection?.responsesDeployments ?? [defaultResponsesModel];
+  const selectedResponsesModel = config.delegation?.type === 'responses' ? config.delegation.responses.model : defaultResponsesModel;
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch('/api/config', { signal: controller.signal }).then(async response => { const data = await response.json(); if (!response.ok) throw new Error(data.error); return data; }).then((data: PublicConfig) => { if (!controller.signal.aborted) { const initial = sceneConfig('home', data.defaultConfig, data.responsesDeployment); setConnection(data); setConfig(initial); setJsonValue(JSON.stringify(initial, null, 2)); } }).catch(reason => { if (!controller.signal.aborted) setError(`无法读取配置：${reason.message}`); });
+    fetch('/api/config', { signal: controller.signal }).then(async response => { const data = await response.json(); if (!response.ok) throw new Error(data.error); return data; }).then((data: PublicConfig) => { if (!controller.signal.aborted) { const initial = sceneConfig('knowledge', data.defaultConfig, data.responsesDeployment); setConnection(data); setConfig(initial); setJsonValue(JSON.stringify(initial, null, 2)); } }).catch(reason => { if (!controller.signal.aborted) setError(`无法读取配置：${reason.message}`); });
     return () => { controller.abort(); client.current?.dispose(); };
   }, []);
   useEffect(() => { if (!notice) return; const timer = setTimeout(() => setNotice(''), 5000); return () => clearTimeout(timer); }, [notice]);
@@ -83,11 +90,12 @@ export function App() {
     return () => { document.removeEventListener('keydown', trap); previous?.focus(); };
   }, [help]);
 
-  function changeConfig(value: SessionConfig) { validateSceneConfig(scene, value, connection?.responsesDeployment ?? 'gpt-6-luna'); setConfig(value); setJsonValue(JSON.stringify(value, null, 2)); setJsonError(''); }
-  function chooseScene(value: SceneId) { if (locked) return; const next = sceneConfig(value, config, connection?.responsesDeployment ?? 'gpt-6-luna'); setScene(value); setError(''); setConfig(next); setJsonValue(JSON.stringify(next, null, 2)); setJsonError(''); }
-  function editJson(value: string) { setJsonValue(value); try { const parsed = validateConfig(JSON.parse(value)); validateSceneConfig(scene, parsed, connection?.responsesDeployment ?? 'gpt-6-luna'); setConfig(parsed); setJsonError(''); } catch (reason) { setJsonError(String(reason)); } }
+  function changeConfig(value: SessionConfig) { validateSceneConfig(scene, value, responsesModels); setConfig(value); setJsonValue(JSON.stringify(value, null, 2)); setJsonError(''); }
+  function chooseScene(value: SceneId) { if (locked) return; const next = sceneConfig(value, config, selectedResponsesModel); setScene(value); setError(''); setConfig(next); setJsonValue(JSON.stringify(next, null, 2)); setJsonError(''); }
+  function editJson(value: string) { setJsonValue(value); try { const parsed = validateConfig(JSON.parse(value)); validateSceneConfig(scene, parsed, responsesModels); setConfig(parsed); setJsonError(''); } catch (reason) { setJsonError(String(reason)); } }
   async function refreshDevices() { if (navigator.mediaDevices) setDevices(await navigator.mediaDevices.enumerateDevices()); }
   function receive(event: Event) {
+    if ((event.type === 'session.started' || event.type === 'session.updated') && event.session?.delegation?.type === 'responses' && startConfig.current) startConfig.current = { ...startConfig.current, delegation: event.session.delegation };
     setState(current => reduceEvent(current, event));
     if (['session.input_audio.muted', 'session.input_audio.unmuted', 'error'].includes(event.type)) setMuting(false);
     if (event.type === 'session.started') setStatus('live');
@@ -108,7 +116,7 @@ export function App() {
       validateSceneConfig(scene, valid, connection!.responsesDeployment);
       startConfig.current = structuredClone(valid);
       started.current = Date.now();
-      await current.start(valid, transport, micDevice, inputSource, scene);
+      await current.start(valid, transport, micDevice, inputSource, scene, scene === 'knowledge' ? { mode: knowledgeMode, revision: knowledgeRevision } : undefined);
       if (current.disposed) return;
       if (outputDevice) await current.audio.outputDevice(outputDevice).catch(reason => setNotice(String(reason)));
       setStatus('live'); waveformTick(value => value + 1); await refreshDevices();
@@ -151,8 +159,9 @@ export function App() {
       {connection && !connection.configured && <div className="alert warning"><Info size={17} /><span>后端还未配置密钥。请填写项目 .env 中的 AZURE_OPENAI_API_KEY 并重启；不要将密钥填进前端 JSON。</span></div>}
       {error && <div className="alert error" role="alert"><Info size={17} /><span>{error}</span><button className="icon-button" onClick={() => setError('')} aria-label="关闭错误提示"><X size={16} /></button></div>}
       <div className="mobile-tabs" role="tablist" aria-label="工作区分区">{[['settings', '会话设置'], ['studio', '语音体验'], ['tasks', '委派任务']].map(([value, title]) => <button role="tab" aria-selected={tab === value} className={tab === value ? 'active' : ''} onClick={() => setTab(value)} key={value}>{title}</button>)}</div>
+      {scene === 'knowledge' && connection && <KnowledgePanel csrf={connection.csrf} mode={knowledgeMode} changeMode={setKnowledgeMode} locked={locked} onRevision={setKnowledgeRevision} />}
       <div className={`workspace-grid mobile-${tab}`}>
-        <ConfigPanel config={config} change={changeConfig} scene={scene} chooseScene={chooseScene} transport={transport} setTransport={setTransport} inputSource={inputSource} setInputSource={setInputSource} locked={locked} update={updateResponses} notify={setNotice} responsesModel={connection?.responsesDeployment ?? 'gpt-6-luna'} json={json} setJson={editJson} jsonError={jsonError} />
+        <ConfigPanel config={config} change={changeConfig} scene={scene} chooseScene={chooseScene} transport={transport} setTransport={setTransport} inputSource={inputSource} setInputSource={setInputSource} locked={locked} update={updateResponses} notify={setNotice} responsesModel={defaultResponsesModel} responsesModels={responsesModels} json={json} setJson={editJson} jsonError={jsonError} />
         <section className="studio-panel panel" aria-label="语音体验"><div className="studio-topline"><div className={`session-status ${status}`}><span />{statusLabels[status]}</div><div className="session-clock"><Clock3 size={13} /><span>{formatTime(elapsed)}</span><span className="transport-tag">{transport === 'webrtc' ? 'WEBRTC' : 'WEBSOCKET'}</span></div></div>
           <div className="duplex-heading"><span className="duplex-title">TWO VOICES.<br /><span>ONE CONVERSATION.</span></span><div className="duplex-symbol" aria-hidden="true"><span /><span /><ArrowRight size={22} /><ArrowRight size={22} /></div></div>
           <div className="audio-tracks">
@@ -173,7 +182,7 @@ export function App() {
           </section>
           <div className="context-composer"><div className="context-top"><select aria-label="上下文追加方式" value={contextMode} onChange={event => setContextMode(event.target.value)}><option value="thinking">补充上下文</option><option value="instructions">追加指令</option><option value="commentary">请模型说出</option></select><span>单条最多 500 tokens · 服务端校验</span></div><div className="context-input"><textarea aria-label="会话上下文" rows={2} placeholder={contextMode === 'thinking' ? '给模型一点背景，不必打断对话…' : contextMode === 'instructions' ? '追加可信应用指令，不要粘贴不可信内容…' : '输入希望模型说出的内容，它可能会转述…'} value={context} onChange={event => setContext(event.target.value)} /><button className="send-context" aria-label="发送上下文" disabled={!active || !context.trim()} onClick={() => act(async () => { await send({ type: `session.${contextMode}.append`, delegation_id: null, content: context }); setContext(''); setNotice('内容已发送；接受注入不代表已朗读'); })}><Send size={17} /></button></div></div>
         </section>
-        <DelegationPanel state={state} scene={scene} responsesModel={connection?.responsesDeployment ?? 'gpt-6-luna'} active={active} sendResult={async (id, content, speak) => { await send({ type: speak ? 'session.commentary.append' : 'session.thinking.append', delegation_id: id, content }); setNotice('委派结果已发送，等待注入确认'); }} />
+        <DelegationPanel state={state} scene={scene} responsesModel={active && startConfig.current?.delegation?.type === 'responses' ? startConfig.current.delegation.responses.model : selectedResponsesModel} active={active} sendResult={async (id, content, speak) => { await send({ type: speak ? 'session.commentary.append' : 'session.thinking.append', delegation_id: id, content }); setNotice('委派结果已发送，等待注入确认'); }} />
       </div>
       <div className="session-footer"><div><span><Activity size={13} />{transport === 'websocket' ? 'PCM16 · 24 kHz · Mono' : 'WebRTC · 协商音频'}</span><span><Clock3 size={13} />语音用量 <strong>{state.seconds}s</strong>{state.finalUsage ? ' · 已确认' : ' · 累计快照'}</span><span className="context-meter">上下文 <meter min={0} max={1} value={state.contextRatio} />{Math.round(state.contextRatio * 100)}%</span></div><button className="text-button" onClick={exportSession}><ArrowDownToLine size={14} />导出会话</button></div>
       {Object.keys(state.backendUsage).length > 0 && <details className="backend-usage"><summary>委派模型用量（与语音分开计费）</summary><pre>{JSON.stringify(state.backendUsage, null, 2)}</pre></details>}

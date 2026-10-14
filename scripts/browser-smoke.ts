@@ -5,6 +5,8 @@ import { resolve } from 'node:path';
 await mkdir('output', { recursive: true });
 const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL ?? 'chrome', headless: true, args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', ...(process.env.SMOKE_AUDIO ? [`--use-file-for-fake-audio-capture=${resolve(process.env.SMOKE_AUDIO)}`] : [])] });
 const results: any[] = [];
+const knowledge = process.env.SMOKE_SCENE === 'knowledge';
+const transportOnly = process.env.SMOKE_TRANSPORT_ONLY === '1';
 try {
   for (const transport of process.argv[2] ? [process.argv[2]] : ['webrtc', 'websocket']) {
     const context = await browser.newContext({ permissions: ['microphone'], viewport: { width: 1440, height: 1100 } });
@@ -40,6 +42,10 @@ try {
     try {
       await page.goto(process.env.STUDIO_URL ?? 'http://localhost:3000');
       await page.getByRole('button', { name: '开始体验' }).waitFor();
+      if (knowledge) {
+        await page.getByRole('button', { name: '知识库问答', exact: true }).click();
+        await page.getByLabel('知识库回答方式').selectOption(process.env.SMOKE_KNOWLEDGE_MODE ?? 'auto');
+      }
       if (transport === 'webrtc') {
         await page.screenshot({ path: 'output/studio-desktop.png', fullPage: true });
         await page.setViewportSize({ width: 390, height: 844 });
@@ -56,19 +62,18 @@ try {
       await page.getByRole('button', { name: '输入静音', exact: true }).click();
       await page.getByRole('button', { name: '取消输入静音', exact: true }).waitFor({ timeout: 5000 });
       await page.getByRole('button', { name: '取消输入静音', exact: true }).click();
-      if (transport === 'websocket') {
-        await page.evaluate(async id => {
+      if (!transportOnly && (transport === 'websocket' || knowledge)) {
+        await page.evaluate(async ({ id, knowledge }) => {
           const config = await (await fetch('/api/config')).json();
           for (const event of [
-            { type: 'response.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '请调用 get_demo_devices 查看模拟家电状态。' }] } },
+            { type: 'response.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: knowledge ? '请查知识库，星河实验室蓝鲸项目预算多少，设备能借几天？' : '请调用 get_demo_devices 查看模拟家电状态。' }] } },
             { type: 'response.create' },
           ]) {
             const response = await fetch(`/api/sessions/${id}/commands`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Studio-Csrf': config.csrf }, body: JSON.stringify({ event }) });
             if (!response.ok) throw new Error(await response.text());
           }
-        }, sessionId);
-        await page.getByRole('button', { name: '批准并执行模拟工具' }).first().click({ timeout: 25_000 });
-        await page.getByText('结果已提交（非执行回执）').first().waitFor({ timeout: 10_000 });
+        }, { id: sessionId, knowledge });
+        await page.getByText(knowledge ? '知识库结果已提交' : '模拟工具结果已提交', { exact: true }).first().waitFor({ timeout: 90_000 });
       }
       await page.waitForTimeout(transport === 'webrtc' ? 12_000 : 4000);
       const rtcStats = await page.evaluate(async () => {
@@ -87,10 +92,12 @@ try {
     } catch (error) {
       errors.push(String(error));
       const alerts = await page.getByRole('alert').allTextContents();
-      results.push({ transport, events, errors, alerts });
+      const rtcStats = await page.evaluate(async () => Promise.all(((window as any).__peers as RTCPeerConnection[]).map(async peer => ({ connectionState: peer.connectionState, rtp: [...(await peer.getStats()).values()].filter(item => ['inbound-rtp', 'outbound-rtp'].includes(item.type)).map(item => ({ type: item.type, packetsReceived: item.packetsReceived, packetsSent: item.packetsSent, bytesReceived: item.bytesReceived, bytesSent: item.bytesSent })) })))).catch(() => []);
+      results.push({ transport, events, errors, alerts, rtcStats });
       await page.screenshot({ path: `output/studio-${transport}-failed.png`, fullPage: true });
     } finally { await context.close(); }
   }
 } finally { await browser.close(); }
-await writeFile(`output/browser-smoke${process.argv[2] ? `-${process.argv[2]}` : ''}.json`, JSON.stringify({ testedAt: new Date().toISOString(), syntheticSpeech: !!process.env.SMOKE_AUDIO, results }, null, 2));
+await writeFile(`output/browser-smoke${knowledge ? '-knowledge' : ''}${process.argv[2] ? `-${process.argv[2]}` : ''}.json`, JSON.stringify({ testedAt: new Date().toISOString(), scene: knowledge ? 'knowledge' : 'home', transportOnly, syntheticSpeech: !!process.env.SMOKE_AUDIO, results }, null, 2));
 console.log(JSON.stringify(results, null, 2));
+if (results.some(result => result.errors.length)) process.exitCode = 1;

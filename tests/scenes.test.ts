@@ -4,16 +4,27 @@ import { SCENE_IDS, SCENES, sceneConfig, validateSceneConfig } from '../shared/s
 import { evaluateSceneCall, initialSceneState, runSceneTool } from '../server/scenes';
 
 describe('scenario delegation', () => {
-  it('offers exactly three scenes pinned to the requested Responses model and tools', () => {
-    expect(SCENE_IDS).toEqual(['home', 'meeting', 'search']);
+  it('defaults every scene to Luna, default tier and parallel tools while allowing Sol aliases', () => {
+    const allowed = ['gpt-6-luna', 'gpt-live-dev-sol'];
     for (const scene of SCENE_IDS) {
-      const config = sceneConfig(scene, DEFAULT_CONFIG, 'gpt-6-luna');
+      const config = sceneConfig(scene, DEFAULT_CONFIG);
+      expect(config.delegation).toMatchObject({ responses: { model: 'gpt-6-luna', service_tier: 'default', parallel_tool_calls: true } });
+      expect(() => validateSceneConfig(scene, config, allowed)).not.toThrow();
+      expect(() => validateSceneConfig(scene, sceneConfig(scene, DEFAULT_CONFIG, 'gpt-live-dev-sol'), allowed)).not.toThrow();
+      expect(() => validateSceneConfig(scene, sceneConfig(scene, DEFAULT_CONFIG, 'not-allowed'), allowed)).toThrow();
+    }
+    expect(sceneConfig('knowledge', DEFAULT_CONFIG).instructions).toBe('你是企业实时知识库语音助手。客户询问上传资料、产品手册或知识库相关事实时必须先委派查询，收到有依据的结果后再回答。可以简短说明正在查资料。不要凭记忆编造文档内容或来源。允许插话与追问。语气保持温暖、平静和耐心');
+  });
+  it('offers exactly four scenes pinned to the requested Responses model and tools', () => {
+    expect(SCENE_IDS).toEqual(['home', 'meeting', 'search', 'knowledge']);
+    for (const scene of SCENE_IDS) {
+      const config = sceneConfig(scene, DEFAULT_CONFIG, 'gpt-6.1-sol');
       expect(config.model).toBe('gpt-live-1');
-      expect(config.delegation).toEqual({ type: 'responses', responses: { model: 'gpt-6-luna', instructions: SCENES[scene].backend, tools: SCENES[scene].tools, tool_choice: 'auto' } });
-      expect(() => validateSceneConfig(scene, config, 'gpt-6-luna')).not.toThrow();
-      expect(() => validateSceneConfig(scene, { ...config, delegation: { type: 'client' } }, 'gpt-6-luna')).toThrow();
-      expect(() => validateSceneConfig(scene, { ...config, delegation: { type: 'responses', responses: { model: 'gpt-5.4', tools: SCENES[scene].tools } } }, 'gpt-6-luna')).toThrow();
-      expect(() => validateSceneConfig(scene, { ...config, delegation: { type: 'responses', responses: { model: 'gpt-6-luna', tools: [] } } }, 'gpt-6-luna')).toThrow('工具配置');
+      expect(config.delegation).toEqual({ type: 'responses', responses: { model: 'gpt-6.1-sol', instructions: SCENES[scene].backend, tools: SCENES[scene].tools, tool_choice: 'auto', reasoning: { effort: 'low' }, service_tier: 'default', parallel_tool_calls: true } });
+      expect(() => validateSceneConfig(scene, config, 'gpt-6.1-sol')).not.toThrow();
+      expect(() => validateSceneConfig(scene, { ...config, delegation: { type: 'client' } }, 'gpt-6.1-sol')).toThrow();
+      expect(() => validateSceneConfig(scene, { ...config, delegation: { type: 'responses', responses: { model: 'gpt-5.4', tools: SCENES[scene].tools } } }, 'gpt-6.1-sol')).toThrow();
+      expect(() => validateSceneConfig(scene, { ...config, delegation: { type: 'responses', responses: { model: 'gpt-6.1-sol', tools: [] } } }, 'gpt-6.1-sol')).toThrow('工具配置');
     }
     const homeTools = SCENES.home.tools.filter(tool => tool.type === 'function');
     expect(homeTools).toHaveLength(4);

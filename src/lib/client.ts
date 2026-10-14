@@ -1,6 +1,7 @@
 import type { Event, SessionConfig, Transport } from '../../shared/protocol';
 import type { SceneId } from '../../shared/scenarios';
 import { AudioEngine } from '../audio/engine';
+import type { KnowledgeMode } from '../../shared/knowledge';
 
 export class LiveClient {
   audio = new AudioEngine();
@@ -10,6 +11,7 @@ export class LiveClient {
   disposed = false;
   private seen = new Set<number>();
   private heartbeat?: ReturnType<typeof setTimeout>;
+  private silence?: ReturnType<typeof setInterval>;
 
   constructor(public csrf: string, private onEvent: (event: Event) => void, private onClosed: () => void, private onError: (message: string) => void) {}
 
@@ -20,7 +22,7 @@ export class LiveClient {
     return data;
   }
 
-  async start(config: SessionConfig, transport: Transport, deviceId: string, inputSource: 'microphone' | 'file' = 'microphone', scene?: SceneId) {
+  async start(config: SessionConfig, transport: Transport, deviceId: string, inputSource: 'microphone' | 'file' = 'microphone', scene?: SceneId, knowledge?: { mode: KnowledgeMode; revision?: number }) {
     await this.audio.initialize();
     const stream = transport === 'webrtc' || inputSource === 'microphone' ? await this.audio.microphone(deviceId) : undefined;
     if (this.disposed) { this.audio.stop(); return; }
@@ -44,7 +46,7 @@ export class LiveClient {
       sdp = this.peer.localDescription!.sdp;
     }
     if (this.disposed) { this.dispose(); return; }
-    const created = await this.request('/api/sessions', { transport, session: config, sdp, scene });
+    const created = await this.request('/api/sessions', { transport, session: config, sdp, scene, knowledge });
     this.id = created.id;
     if (this.disposed) { await this.request(`/api/sessions/${this.id}/commands`, { event: { type: 'session.close' } }); return; }
     if (transport === 'webrtc') await this.peer!.setRemoteDescription({ type: 'answer', sdp: created.sdp });
@@ -61,11 +63,17 @@ export class LiveClient {
           if (event.type === 'session.input_audio.muted') this.audio.muted = true;
           if (event.type === 'session.input_audio.unmuted') this.audio.muted = false;
           this.onEvent(event);
+          if (event.type === 'studio.rag.invalidated') { clearInterval(this.silence); this.audio.stop(); this.peer?.close(); this.onError(event.reason); }
           if (event.type === 'session.closed' || event.type === 'studio.closing') {
+            clearInterval(this.silence);
+            this.audio.stopCapture();
             this.audio.cancelUpload(); this.audio.muted = true;
             this.audio.stream?.getTracks().forEach(track => track.stop());
           }
-          if (event.type === 'error') this.onError(event.error?.message ?? '模型返回错误');
+          if (event.type === 'error') {
+            const detail = event.error?.message ?? '模型返回错误';
+            this.onError(/408|timed?\s*out|timeout/i.test(detail) ? '委派模型请求超时，请稍后重新开始会话。当前模型没有被替换。' : detail);
+          }
           if (event.type === 'studio.error') this.onError(event.message);
         } catch (error) { this.onError(String(error)); }
       };
@@ -73,6 +81,10 @@ export class LiveClient {
       this.socket.onclose = () => { clearTimeout(timeout); reject(new Error('事件流已关闭')); this.dispose(); this.onClosed(); };
     });
     if (transport === 'websocket' && stream) await this.audio.capturePcm(audio => this.sendAudio(audio));
+    if (transport === 'websocket' && !stream) {
+      const silence = btoa(String.fromCharCode(...new Uint8Array(960)));
+      this.silence = setInterval(() => { if (!this.audio.uploading) this.sendAudio(silence); }, 20);
+    }
   }
 
   sendAudio(audio: string) {
@@ -97,6 +109,8 @@ export class LiveClient {
   }
 
   async close() {
+    clearInterval(this.silence);
+    this.audio.stopCapture();
     clearTimeout(this.heartbeat);
     this.heartbeat = setTimeout(() => { this.dispose(); this.onClosed(); }, 14_000);
     this.audio.cancelUpload();
@@ -107,6 +121,7 @@ export class LiveClient {
   }
 
   dispose() {
+    clearInterval(this.silence);
     this.disposed = true;
     clearTimeout(this.heartbeat);
     this.audio.stop();

@@ -4,6 +4,20 @@ import { ToolLedger, runDemoTool } from '../server/tools';
 import { evaluateSceneCall, initialSceneState } from '../server/scenes';
 
 describe('session state', () => {
+  it('clears knowledge answer and debug caches when documents are invalidated', () => {
+    const state = { ...emptyState(), sceneState: initialSceneState('knowledge'), seconds: 20, transcripts: [{ text: 'old answer', start: 0, end: 100, speaker: 'output' as const }] };
+    const next = reduceEvent(state, { type: 'studio.rag.invalidated', reason: 'deleted' });
+    expect(next.transcripts).toEqual([]); expect(next.delegations).toEqual([]); expect(next.seconds).toBe(20);
+    expect(next.events).toHaveLength(1);
+  });
+  it('keeps server-mapped knowledge references and ignores model-generated URLs', () => {
+    let state = reduceEvent(emptyState(), { type: 'studio.scene.state', state: { scene: 'knowledge' } });
+    state = reduceEvent(state, { type: 'session.delegation.created', delegation: { id: 'task', target: 'responses' } });
+    state = reduceEvent(state, { type: 'studio.rag.sources', delegation_id: 'task', mode: 'iq', sources: [{ source_id: 'S1', title: '规则', location: '第1页', url: '/api/knowledge/documents/abc-def/content?preview=1' }, { source_id: 'S2', title: '规则', location: '第2页', url: '/api/knowledge/documents/abc-def/content?preview=1' }] });
+    state = reduceEvent(state, { type: 'response.event', delegation_id: 'task', event: { type: 'response.output_text.annotation.added', annotation: { type: 'url_citation', url: 'https://untrusted.invalid', title: 'fake' } } });
+    expect(state.delegations[0].sources).toHaveLength(2);
+    expect(state.delegations[0].sources.every(item => item.url.startsWith('/api/knowledge/'))).toBe(true);
+  });
   it('takes the latest cumulative usage instead of summing it', () => {
     let state = reduceEvent(emptyState(), { type: 'session.usage.updated', usage: { seconds: 12 }, context_window: { usage_ratio: 0.2 } });
     state = reduceEvent(state, { type: 'session.usage.updated', usage: { seconds: 20 } });

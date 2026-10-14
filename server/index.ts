@@ -9,6 +9,13 @@ import { isSceneId, validateSceneConfig, type SceneId } from '../shared/scenario
 import { allowedEndpoint, originAllowed, parseCookie, sameToken, validateAdminPasswordHash, verifyAdminPassword } from './security.js';
 import { runDemoTool, ToolLedger } from './tools.js';
 import { evaluateSceneCall, initialSceneState, type SceneState } from './scenes.js';
+import { BlobKnowledgeStore } from './knowledge/store.js';
+import { KnowledgeService } from './knowledge/service.js';
+import { AzureKnowledge } from './knowledge/azure.js';
+import { knowledgeRoutes } from './knowledge/routes.js';
+import type { KnowledgeSnapshot } from '../shared/knowledge.js';
+import { withoutKnowledgeBodies } from './knowledge/privacy.js';
+import { abortable } from './knowledge/deadline.js';
 
 const production = process.env.NODE_ENV === 'production';
 const port = Number(process.env.PORT ?? 3000);
@@ -19,6 +26,9 @@ const apiKey = process.env.AZURE_OPENAI_API_KEY ?? '';
 const configured = !!apiKey && !apiKey.startsWith('replace-');
 const deployment = process.env.AZURE_OPENAI_DEPLOYMENT ?? 'gpt-live-1';
 const responsesDeployment = process.env.RESPONSES_DEPLOYMENT ?? 'gpt-6-luna';
+const responsesDeployments = [...new Set([responsesDeployment, ...(process.env.RESPONSES_DEPLOYMENTS ?? 'gpt-6-luna,gpt-6.1-sol').split(',').map(value => value.trim()).filter(Boolean)])];
+const knowledge = process.env.KNOWLEDGE_STORAGE_CONNECTION_STRING || process.env.KNOWLEDGE_STORAGE_URL ? new KnowledgeService(new BlobKnowledgeStore()) : undefined;
+const azureKnowledge = new AzureKnowledge();
 const maxSessions = Number(process.env.MAX_SESSIONS ?? 4);
 const maxDuration = Number(process.env.MAX_SESSION_SECONDS ?? 1800) * 1000;
 const authMode = process.env.AUTH_MODE ?? (production ? '' : 'local');
@@ -35,6 +45,7 @@ type Owner = { id: string; csrf: string; expires: number; principal: string; cre
 type Live = {
   id: string; owner: string; config: SessionConfig; transport: Transport; upstream: WebSocket;
   sceneState?: SceneState;
+  knowledge?: KnowledgeSnapshot; knowledgeAbort?: AbortController; knowledgeInvalidated?: boolean;
   status: 'ready' | 'closing' | 'closed'; ring: Event[]; seq: number; clients: Set<WebSocket>;
   tools: ToolLedger; delegations: Set<string>; expires: ReturnType<typeof setTimeout>;
   idle?: ReturnType<typeof setTimeout>; closeTimer?: ReturnType<typeof setTimeout>;
@@ -59,6 +70,12 @@ app.use((request, response, next) => {
   next();
 });
 app.get('/healthz', (_request, response) => response.json({ status: 'ok' }));
+// Optional bridge during a parallel production migration; only the landing page redirects.
+if (process.env.STUDIO_REDIRECT_ORIGIN) {
+  const target = new URL(process.env.STUDIO_REDIRECT_ORIGIN);
+  if (target.protocol !== 'https:' || target.username || target.password || target.pathname !== '/' || target.search || target.hash) throw new Error('STUDIO_REDIRECT_ORIGIN 必须是 HTTPS origin');
+  app.get('/', (_request, response) => response.redirect(302, target.origin));
+}
 
 function principal(headers: Record<string, any>): string {
   if (authMode === 'local') return 'local';
@@ -133,9 +150,10 @@ function message(error: unknown): string {
   return apiKey ? text.split(apiKey).join('[redacted]') : text;
 }
 
-app.get('/api/config', (_request, response) => response.json({ configured, endpoint: endpoint.origin, deployment, responsesDeployment, csrf: response.locals.owner.csrf, authMode, defaultConfig: { ...DEFAULT_CONFIG, model: deployment }, maxSessionSeconds: maxDuration / 1000 }));
+app.get('/api/config', (_request, response) => response.json({ configured, endpoint: endpoint.origin, deployment, responsesDeployment, responsesDeployments, csrf: response.locals.owner.csrf, authMode, defaultConfig: { ...DEFAULT_CONFIG, model: deployment }, maxSessionSeconds: maxDuration / 1000 }));
 
 function publish(live: Live, event: Event) {
+  if (live.knowledge && event.type !== 'session.output_audio.delta') event = withoutKnowledgeBodies(event);
   const safe = event.type === 'session.output_audio.delta' ? event : safeEvent(event, apiKey);
   const frame = { ...safe, _seq: ++live.seq };
   if (event.type !== 'session.output_audio.delta') {
@@ -156,7 +174,7 @@ function upstreamSend(live: Live, event: Event) {
 }
 
 function toolsUpdated(live: Live) {
-  publish(live, { type: 'studio.tools', calls: [...live.tools.calls.values()] });
+  publish(live, { type: 'studio.tools', calls: [...live.tools.calls.values()].map(call => call.name === 'search_knowledge' ? { ...call, output: call.state === 'submitted' ? '[知识库结果已提交；正文不写入事件日志]' : undefined } : call) });
 }
 
 function continueTools(live: Live) {
@@ -173,6 +191,10 @@ function autoSubmitSceneTools(live: Live) {
   for (const pending of live.tools.calls.values()) {
     if (pending.state !== 'pending') continue;
     const call = live.tools.claim(pending.callId);
+    if (live.sceneState.scene === 'knowledge') {
+      void runKnowledgeTool(live, call.callId, call.name, call.arguments).catch(() => closeLive(live, '知识库结果传输失败，请重新连接'));
+      continue;
+    }
     const previousState = live.sceneState;
     const result = evaluateSceneCall(previousState, call.name, call.arguments);
     try {
@@ -187,21 +209,46 @@ function autoSubmitSceneTools(live: Live) {
   }
 }
 
+async function runKnowledgeTool(live: Live, callId: string, name: string, argumentsText: string) {
+  try {
+    if (!knowledge || !live.knowledge || !live.knowledgeAbort) throw new Error('知识库未配置');
+    const args = JSON.parse(argumentsText);
+    if (name !== 'search_knowledge' || !object(args) || Object.keys(args).some(key => key !== 'query') || typeof args.query !== 'string' || !args.query.trim() || args.query.length > 2000) throw new Error('知识库查询参数无效');
+    const snapshot = live.knowledge;
+    const signal = AbortSignal.any([live.knowledgeAbort.signal, AbortSignal.timeout(60_000)]);
+    const { mode, evidence } = await abortable((async () => {
+      const mode = await knowledge!.resolveMode(snapshot);
+      const evidence = mode === 'full' ? await knowledge!.fullEvidence(snapshot) : await azureKnowledge.retrieve(snapshot, args.query, signal);
+      await knowledge!.validate(snapshot);
+      return { mode, evidence };
+    })(), signal);
+    if (live.status !== 'ready' || signal.aborted) throw new Error('知识库请求超时或已失效');
+    publish(live, { type: 'studio.rag.sources', delegation_id: live.tools.calls.get(callId)!.delegationId, mode, revision: snapshot.revision, sources: evidence.map(({ text: _text, ...source }) => source) });
+    submitTool(live, callId, JSON.stringify({ status: evidence.length ? 'ok' : 'no_evidence', mode, evidence }));
+  } catch {
+    if (live.status === 'ready' && !live.knowledgeAbort?.signal.aborted) submitTool(live, callId, JSON.stringify({ status: 'unavailable', message: '知识库查询失败、超时或资料已失效；请告知用户，勿编造答案。' }));
+  }
+}
+
 function closeLive(live: Live, reason: string) {
   if (live.status !== 'ready') return;
   live.status = 'closing';
+  live.knowledgeAbort?.abort();
   publish(live, { type: 'studio.closing', reason });
   try { upstreamSend(live, { type: 'session.close', event_id: randomUUID() }); } catch { live.upstream.terminate(); }
   live.closeTimer = setTimeout(() => live.upstream.terminate(), 12_000);
 }
 
-function bindLive(id: string, owner: string, config: SessionConfig, transport: Transport, upstream: WebSocket, initial: Event[], scene?: SceneId): Live {
+function bindLive(id: string, owner: string, config: SessionConfig, transport: Transport, upstream: WebSocket, initial: Event[], scene?: SceneId, snapshot?: KnowledgeSnapshot): Live {
   const live: Live = { id, owner, config, transport, upstream, sceneState: scene ? initialSceneState(scene) : undefined, status: 'ready', ring: [], seq: 0, clients: new Set(), tools: new ToolLedger(), delegations: new Set(), expires: setTimeout(() => closeLive(live, '应用会话时长上限'), maxDuration) };
   live.idle = setTimeout(() => closeLive(live, '浏览器未连接'), 20_000);
   sessions.set(id, live);
+  live.knowledge = snapshot;
+  if (snapshot) live.knowledgeAbort = new AbortController();
   alive.set(upstream, true);
   upstream.on('pong', () => alive.set(upstream, true));
   const handle = (event: Event) => {
+    if (live.knowledgeInvalidated && !['session.closed', 'session.usage.updated'].includes(event.type)) return;
     if (event.type === 'session.started' || event.type === 'session.updated') {
       if (event.session) {
         for (const key of ['model', 'instructions', 'audio', 'delegation'] as const) {
@@ -227,6 +274,7 @@ function bindLive(id: string, owner: string, config: SessionConfig, transport: T
   upstream.on('close', () => {
     const confirmed = live.status === 'closed';
     live.status = 'closed';
+    live.knowledgeAbort?.abort();
     clearTimeout(live.expires); clearTimeout(live.idle); clearTimeout(live.closeTimer);
     publish(live, { type: 'studio.disconnected', final_usage_confirmed: confirmed });
     for (const client of live.clients) client.close(1000, 'Session ended');
@@ -272,15 +320,19 @@ app.post('/api/sessions', async (request, response) => {
   try {
     const config = validateConfig(request.body.session);
     if (config.model !== deployment) throw new Error('该 Studio 只允许服务器配置的语音部署');
+    if (config.delegation?.type === 'responses' && !responsesDeployments.includes(config.delegation.responses.model)) throw new Error('必须使用服务器允许的 Responses 委派部署');
     const scene = request.body.scene;
     if (scene !== undefined && !isSceneId(scene)) throw new Error('未知场景');
-    if (scene) validateSceneConfig(scene, config, responsesDeployment);
+    if (scene) validateSceneConfig(scene, config, responsesDeployments);
+    const snapshot = scene === 'knowledge' ? await knowledge?.snapshot(request.body.knowledge?.mode ?? 'auto', request.body.knowledge?.revision) : undefined;
+    if (scene === 'knowledge' && !snapshot) throw new Error('请先配置开发知识库');
     const transport = request.body.transport as Transport;
     if (!['webrtc', 'websocket'].includes(transport)) throw new Error('transport 必须是 webrtc 或 websocket');
     const id = randomUUID();
     if (transport === 'websocket') {
       const { socket, initial } = await connectUpstream('/openai/v1/live/sessions', config);
-      active = bindLive(id, owner.id, config, transport, socket, initial, scene);
+      active = bindLive(id, owner.id, config, transport, socket, initial, scene, snapshot);
+      if (snapshot) await knowledge!.validate(snapshot);
       if (response.destroyed) closeLive(active, '浏览器已离开');
       response.json({ id, session: initial.find(event => event.type === 'session.started')?.session });
     } else {
@@ -294,7 +346,8 @@ app.post('/api/sessions', async (request, response) => {
       if (typeof data.session?.id !== 'string' || typeof data.transport?.sdp !== 'string') throw new Error('Azure 返回了不完整的 WebRTC 会话');
       detachedSessionId = data.session.id;
       const attached = await connectUpstream(`/openai/v1/live/sessions/${encodeURIComponent(data.session.id)}/attach`);
-      active = bindLive(id, owner.id, config, transport, attached.socket, [{ type: 'session.started', session: data.session }], scene);
+      active = bindLive(id, owner.id, config, transport, attached.socket, [{ type: 'session.started', session: data.session }], scene, snapshot);
+      if (snapshot) await knowledge!.validate(snapshot);
       detachedSessionId = undefined;
       if (response.destroyed) closeLive(active, '浏览器已离开');
       response.json({ id, session: data.session, sdp: data.transport.sdp });
@@ -327,14 +380,15 @@ function submitTool(live: Live, callId: string, output: string) {
   const call = live.tools.calls.get(callId);
   if (!call || call.state !== 'running') throw new Error('工具结果状态无效');
   upstreamSend(live, { type: 'response.item.create', event_id: randomUUID(), item: { type: 'function_call_output', call_id: callId, output } });
-  call.state = 'submitted'; call.output = output;
+  call.state = 'submitted'; call.output = call.name === 'search_knowledge' ? '[知识库结果已提交]' : output;
   toolsUpdated(live); continueTools(live);
 }
 
 function command(live: Live, raw: unknown, experimental = false) {
   if (live.status !== 'ready') throw new Error('会话正在关闭或已结束，不再接受新命令');
   const event = validateCommand(raw, live.config, live.transport, experimental);
-  if (event.type === 'session.update' && live.sceneState) validateSceneConfig(live.sceneState.scene, { ...live.config, ...event.session }, responsesDeployment);
+  if (event.type === 'session.update' && event.session?.delegation?.type === 'responses' && !responsesDeployments.includes(event.session.delegation.responses?.model)) throw new Error('必须使用服务器允许的 Responses 委派部署');
+  if (event.type === 'session.update' && live.sceneState) validateSceneConfig(live.sceneState.scene, { ...live.config, ...event.session }, responsesDeployments);
   if (event.delegation_id && !live.delegations.has(event.delegation_id)) throw new Error('delegation_id 不属于当前会话');
   if (event.type === 'response.item.create' && event.item?.type === 'function_call_output') {
     if (live.sceneState) throw new Error('场景工具结果必须在委派任务中批准执行');
@@ -373,6 +427,14 @@ app.post('/api/sessions/:id/tools/:callId', (request, response) => {
   }
 });
 
+app.use('/api/knowledge', knowledgeRoutes(knowledge, id => {
+  for (const live of sessions.values()) if (live.knowledge && (!id || live.knowledge.documentIds.includes(id))) {
+    live.knowledgeInvalidated = true; live.knowledgeAbort?.abort();
+    live.ring = []; live.tools = new ToolLedger(); live.delegations.clear();
+    publish(live, { type: 'studio.rag.invalidated', reason: '共享知识库资料已删除，会话已结束，请重新开始' });
+    closeLive(live, '知识库资料已删除');
+  }
+}, () => [...sessions.values()].filter(live => live.status === 'ready' && live.knowledge).length));
 app.use('/api', (_request, response) => response.status(404).json({ error: '接口不存在' }));
 app.use((error: any, _request: express.Request, response: express.Response, _next: express.NextFunction) => response.status(error.status ?? 500).json({ error: message(error) }));
 const http = createServer(app);

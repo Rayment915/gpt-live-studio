@@ -10,6 +10,7 @@ export type StudioState = {
   delegations: Delegation[];
   tools: ToolCall[];
   sceneState?: SceneState;
+  ragMode?: 'full' | 'iq';
   seconds: number;
   contextRatio: number;
   finalUsage: boolean;
@@ -44,6 +45,12 @@ export function groupTranscripts(fragments: Transcript[]): Transcript[] {
 export function reduceEvent(state: StudioState, event: Event, direction: 'in' | 'out' = 'in'): StudioState {
   const next = { ...state, events: [...state.events, { direction, time: Date.now(), event: safeEvent(event) }].slice(-800) };
   if (direction === 'out') return next;
+  if (event.type === 'studio.rag.invalidated') return { ...emptyState(), sceneState: state.sceneState, seconds: state.seconds, backendUsage: state.backendUsage, finalUsage: state.finalUsage, events: [next.events.at(-1)!] };
+  if (event.type === 'studio.rag.sources') {
+    next.ragMode = event.mode;
+    const sources = (event.sources ?? []).filter((source: any) => typeof source.url === 'string' && /^\/api\/knowledge\/documents\/[a-f0-9-]+\/content(?:\?preview=1)?$/.test(source.url)).map((source: any) => ({ title: `[${source.source_id}] ${source.title} · ${source.location}`, url: source.url }));
+    next.delegations = state.delegations.map(item => item.id === event.delegation_id ? { ...item, sources } : item);
+  }
   if (event.type === 'session.input_transcript.delta' || event.type === 'session.output_transcript.delta') {
     const speaker: Transcript['speaker'] = event.type === 'session.input_transcript.delta' ? 'input' : 'output';
     next.transcripts = [...state.transcripts, { speaker, text: event.delta, start: event.start_ms, end: event.end_ms } as Transcript].slice(-3000);
@@ -73,7 +80,7 @@ export function reduceEvent(state: StudioState, event: Event, direction: 'in' | 
   }
   if (event.type === 'response.event') {
     const nested = event.event;
-    next.delegations = state.delegations.map(item => item.id !== event.delegation_id ? item : { ...item, text: item.text + (nested.type === 'response.output_text.delta' ? nested.delta : ''), sources: [...new Map([...item.sources, ...responseSources(nested)].map(source => [source.url, source])).values()].slice(0, 20), status: nested.type === 'response.completed' ? (nested.response?.output?.some((output: any) => output.type === 'function_call') || state.tools.some(call => call.delegationId === item.id && call.state !== 'submitted') ? '处理工具中' : '后端响应完成') : ['response.failed', 'response.incomplete'].includes(nested.type) ? '响应未完成' : ['response.created', 'response.in_progress'].includes(nested.type) ? '进行中' : item.status });
+    next.delegations = state.delegations.map(item => item.id !== event.delegation_id ? item : { ...item, text: item.text + (nested.type === 'response.output_text.delta' ? nested.delta : ''), sources: state.sceneState?.scene === 'knowledge' || state.ragMode ? item.sources : [...new Map([...item.sources, ...responseSources(nested)].map(source => [source.url, source])).values()].slice(0, 20), status: nested.type === 'response.completed' ? (nested.response?.output?.some((output: any) => output.type === 'function_call') || state.tools.some(call => call.delegationId === item.id && call.state !== 'submitted') ? '处理工具中' : '后端响应完成') : ['response.failed', 'response.incomplete'].includes(nested.type) ? '响应未完成' : ['response.created', 'response.in_progress'].includes(nested.type) ? '进行中' : item.status });
     if (nested.type === 'response.completed' && nested.response?.usage) next.backendUsage = { ...state.backendUsage, [nested.response.id ?? event.delegation_id]: nested.response.usage };
   }
   return next;

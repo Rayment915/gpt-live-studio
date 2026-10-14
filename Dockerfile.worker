@@ -1,0 +1,21 @@
+FROM node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+FROM node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS runtime
+ENV NODE_ENV=production KNOWLEDGE_SOFFICE=/usr/bin/soffice
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv libreoffice-writer libreoffice-impress fonts-noto-cjk ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY requirements-knowledge.txt ./
+RUN python3 -m venv /app/.venv && /app/.venv/bin/python -m pip install --no-cache-dir -r requirements-knowledge.txt
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+COPY --from=build --chown=node:node /app/dist/server/knowledge ./dist/server/knowledge
+COPY --chown=node:node scripts/validate-document.py ./scripts/validate-document.py
+RUN mkdir -p /app/.knowledge-tmp && chown -R node:node /app/.knowledge-tmp
+USER node
+CMD ["node", "dist/server/knowledge/worker.js"]

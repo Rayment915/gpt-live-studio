@@ -1,0 +1,78 @@
+import { test, expect } from '@playwright/test';
+import { DEFAULT_CONFIG, DEFAULT_LIVE_PROMPT, LIVE_VOICES } from '../../shared/protocol';
+import { sceneConfig } from '../../shared/scenarios';
+
+test('knowledge UI uploads, binds mode/revision, and confirms deletion', async ({ page }) => {
+  const documents: any[] = []; let revision = 1; let submitted: any; let deletes = 0;
+  await page.route('**/api/config', route => route.fulfill({ json: { configured: true, deployment: 'gpt-live-1', csrf: 'test-token', defaultConfig: DEFAULT_CONFIG, responsesDeployment: 'gpt-live-dev-sol' } }));
+  await page.route('**/api/knowledge', route => route.fulfill({ json: { configured: true, generation: 'test', revision, documents, deleting: false, maxDocuments: 3, maxBytes: 20971520, activeSessions: 0 } }));
+  await page.route('**/api/knowledge/documents', route => {
+    expect(route.request().headers()['x-studio-csrf']).toBe('test-token');
+    documents.push({ id: 'abc-def', name: '规则.md', extension: '.md', status: 'ready', parsed: true, indexed: true, tokens: 50, bytes: 100 }); revision++;
+    return route.fulfill({ status: 202, json: { id: 'abc-def' } });
+  });
+  await page.route('**/api/knowledge/documents/abc-def', route => { expect(route.request().postDataJSON()).toEqual({ confirmed: true }); deletes++; documents[0].status = 'deleting'; return route.fulfill({ status: 202, json: { status: 'deleting' } }); });
+  await page.route('**/api/sessions', route => { submitted = route.request().postDataJSON(); return route.fulfill({ json: { id: 'test-session', session: submitted.session } }); });
+  await page.routeWebSocket('**/api/sessions/test-session/events', socket => { socket.send(JSON.stringify({ type: 'session.started', session: DEFAULT_CONFIG })); });
+  await page.goto('/'); await page.getByRole('button', { name: '知识库问答', exact: true }).click();
+  await page.getByLabel('上传知识库文档').setInputFiles({ name: '规则.md', mimeType: 'text/markdown', buffer: Buffer.from('借用14天') });
+  await expect(page.getByText('IQ 已就绪', { exact: false })).toBeVisible();
+  await page.getByLabel('知识库回答方式').selectOption('iq');
+  await page.getByRole('button', { name: 'WebSocket', exact: true }).click(); await page.getByLabel('输入源').selectOption('file');
+  await page.getByRole('button', { name: '开始体验' }).click();
+  await expect.poll(() => submitted?.knowledge).toEqual({ mode: 'iq', revision: 2 });
+  expect(submitted.session.delegation.responses.model).toBe('gpt-live-dev-sol');
+  await expect(page.getByLabel('知识库回答方式')).toBeDisabled();
+  await page.getByRole('button', { name: '删除 规则.md', exact: true }).click();
+  await expect(page.getByRole('alertdialog')).toBeVisible(); expect(deletes).toBe(0);
+  await page.getByRole('button', { name: '确认删除并结束相关会话' }).click();
+  await expect.poll(() => deletes).toBe(1);
+  await expect(page.getByText('删除中', { exact: false }).first()).toBeVisible();
+});
+
+test('unavailable preset model migrates to Luna; knowledge layout fits mobile', async ({ page }) => {
+  await page.route('**/api/config', route => route.fulfill({ json: { configured: true, deployment: 'gpt-live-1', csrf: 't', defaultConfig: DEFAULT_CONFIG, responsesDeployment: 'gpt-6-luna', responsesDeployments: ['gpt-6-luna', 'gpt-live-dev-sol'] } }));
+  await page.route('**/api/knowledge', route => route.fulfill({ json: { configured: true, revision: 1, documents: [], deleting: false, activeSessions: 0 } }));
+  await page.addInitScript(config => localStorage.setItem('gpt-live-preset-v1', JSON.stringify(config)), sceneConfig('knowledge', { ...DEFAULT_CONFIG, audio: { output: { voice: 'alloy' } } }, 'obsolete-model'));
+  await page.goto('/'); await page.getByRole('button', { name: '载入预设' }).click();
+  await expect(page.getByLabel('委派模型部署')).toHaveValue('gpt-6-luna');
+  await expect(page.locator('#voice')).toHaveValue('marin');
+  await page.getByRole('button', { name: '知识库问答', exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole('region', { name: '知识库管理' })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test('default prompt, full voice list, model selection and presets reach session payload', async ({ page }) => {
+  let submitted: any;
+  await page.route('**/api/config', route => route.fulfill({ json: { configured: true, deployment: 'gpt-live-1', csrf: 't', defaultConfig: DEFAULT_CONFIG, responsesDeployment: 'gpt-6-luna', responsesDeployments: ['gpt-6-luna', 'gpt-live-dev-sol'] } }));
+  await page.route('**/api/knowledge', route => route.fulfill({ json: { configured: true, revision: 1, documents: [], deleting: false, activeSessions: 0 } }));
+  await page.route('**/api/sessions', route => { submitted = route.request().postDataJSON(); return route.fulfill({ status: 429, json: { error: 'synthetic stop after payload validation' } }); });
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: '知识库问答', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByLabel('让模型如何与你交流')).toHaveValue(DEFAULT_LIVE_PROMPT);
+  await expect(page.getByLabel('委派模型部署')).toHaveValue('gpt-6-luna');
+  expect(await page.locator('#voice option').evaluateAll(options => options.map(option => (option as HTMLOptionElement).value))).toEqual([...LIVE_VOICES]);
+  expect([...LIVE_VOICES]).toEqual(['marin', 'quartz', 'vesper', 'willow', 'gleam', 'meridian']);
+  await expect(page.locator('#voice')).toHaveValue('marin');
+  await page.getByLabel('声音', { exact: false }).selectOption('willow');
+  await page.getByText('Responses 参数', { exact: true }).click();
+  await expect(page.getByLabel('service_tier')).toHaveValue('default');
+  await expect(page.getByLabel('允许并行工具调用')).toBeChecked();
+  await page.getByLabel('委派模型部署').selectOption('gpt-live-dev-sol');
+  await page.getByLabel('允许并行工具调用').uncheck();
+  await page.getByRole('button', { name: '保存预设' }).click();
+  await page.getByLabel('委派模型部署').selectOption('gpt-6-luna');
+  await page.getByRole('button', { name: '载入预设' }).click();
+  await expect(page.getByLabel('委派模型部署')).toHaveValue('gpt-live-dev-sol');
+  await expect(page.getByLabel('允许并行工具调用')).not.toBeChecked();
+  await page.getByRole('button', { name: '会议副驾', exact: true }).click();
+  await expect(page.getByLabel('委派模型部署')).toHaveValue('gpt-live-dev-sol');
+  await page.getByRole('button', { name: '知识库问答', exact: true }).click();
+  await page.getByLabel('委派模型部署').selectOption('gpt-6-luna');
+  await page.getByRole('button', { name: 'WebSocket', exact: true }).click();
+  await page.getByLabel('输入源').selectOption('file');
+  await page.getByRole('button', { name: '开始体验' }).click();
+  await expect(page.getByRole('alert')).toContainText('synthetic stop');
+  expect(submitted.session).toMatchObject({ instructions: DEFAULT_LIVE_PROMPT, audio: { output: { voice: 'willow' } }, delegation: { responses: { model: 'gpt-6-luna', service_tier: 'default', parallel_tool_calls: true } } });
+});

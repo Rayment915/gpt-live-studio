@@ -15,6 +15,15 @@ param adminPasswordHash string
 param foundryEndpoint string
 param voiceDeployment string = 'gpt-live-1'
 param responsesDeployment string = 'gpt-6-luna'
+param responsesDeployments string = 'gpt-6-luna,gpt-live-dev-sol'
+param knowledgeStorageUrl string = ''
+param knowledgeIdentityClientId string = ''
+param knowledgeSearchEndpoint string = ''
+@secure()
+param knowledgeSearchKey string = ''
+param knowledgeOcrEndpoint string = ''
+param knowledgeEmbeddingEndpoint string = ''
+param knowledgeEmbeddingDeployment string = ''
 
 @description('Keep false until identity, access and cost review is complete.')
 param externalIngress bool = false
@@ -45,10 +54,10 @@ resource studio 'Microsoft.App/containerApps@2025-01-01' = {
       registries: [
         { server: acrLoginServer, identity: pullIdentityId }
       ]
-      secrets: [
+      secrets: concat([
         { name: 'foundry-api-key', value: foundryApiKey }
         { name: 'admin-password-hash', value: adminPasswordHash }
-      ]
+      ], empty(knowledgeStorageUrl) ? [] : [{ name: 'knowledge-search-key', value: knowledgeSearchKey }])
     }
     template: {
       terminationGracePeriodSeconds: 30
@@ -57,7 +66,7 @@ resource studio 'Microsoft.App/containerApps@2025-01-01' = {
           name: 'studio'
           image: image
           resources: { cpu: json('0.5'), memory: '1Gi' }
-          env: [
+          env: concat([
             { name: 'NODE_ENV', value: 'production' }
             { name: 'HOST', value: '0.0.0.0' }
             { name: 'PORT', value: '3000' }
@@ -68,9 +77,20 @@ resource studio 'Microsoft.App/containerApps@2025-01-01' = {
             { name: 'AZURE_OPENAI_API_KEY', secretRef: 'foundry-api-key' }
             { name: 'AZURE_OPENAI_DEPLOYMENT', value: voiceDeployment }
             { name: 'RESPONSES_DEPLOYMENT', value: responsesDeployment }
+            { name: 'RESPONSES_DEPLOYMENTS', value: responsesDeployments }
             { name: 'MAX_SESSIONS', value: '4' }
             { name: 'MAX_SESSION_SECONDS', value: '1800' }
-          ]
+          ], empty(knowledgeStorageUrl) ? [] : [
+            { name: 'AZURE_CLIENT_ID', value: knowledgeIdentityClientId }
+            { name: 'KNOWLEDGE_STORAGE_URL', value: knowledgeStorageUrl }
+            { name: 'KNOWLEDGE_CONTAINER', value: 'gpt-live-prod' }
+            { name: 'KNOWLEDGE_INDEX_PREFIX', value: 'gpt-live-prod' }
+            { name: 'KNOWLEDGE_SEARCH_ENDPOINT', value: knowledgeSearchEndpoint }
+            { name: 'KNOWLEDGE_SEARCH_KEY', secretRef: 'knowledge-search-key' }
+            { name: 'KNOWLEDGE_OCR_ENDPOINT', value: knowledgeOcrEndpoint }
+            { name: 'KNOWLEDGE_EMBEDDING_ENDPOINT', value: knowledgeEmbeddingEndpoint }
+            { name: 'KNOWLEDGE_EMBEDDING_DEPLOYMENT', value: knowledgeEmbeddingDeployment }
+          ])
           probes: [
             { type: 'Liveness', httpGet: { path: '/healthz', port: 3000 }, initialDelaySeconds: 15, periodSeconds: 30 }
             { type: 'Readiness', httpGet: { path: '/healthz', port: 3000 }, initialDelaySeconds: 5, periodSeconds: 10 }

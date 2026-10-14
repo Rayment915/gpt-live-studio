@@ -3,7 +3,8 @@ import { DEFAULT_CONFIG } from '../../shared/protocol';
 import { sceneConfig } from '../../shared/scenarios';
 
 test.beforeEach(async ({ page }) => {
-  await page.route('**/api/config', route => route.fulfill({ json: { configured: true, endpoint: 'https://example.openai.azure.com', deployment: 'gpt-live-1', csrf: 'test-token', defaultConfig: DEFAULT_CONFIG, responsesDeployment: 'gpt-6-luna', maxSessionSeconds: 1800 } }));
+  await page.route('**/api/config', route => route.fulfill({ json: { configured: true, endpoint: 'https://example.openai.azure.com', deployment: 'gpt-live-1', csrf: 'test-token', defaultConfig: DEFAULT_CONFIG, responsesDeployment: 'gpt-6.1-sol', maxSessionSeconds: 1800 } }));
+  await page.route('**/api/knowledge', route => route.fulfill({ json: { configured: true, revision: 1, documents: [], deleting: false, activeSessions: 0 } }));
 });
 
 test('renders studio, synchronizes configuration and preserves raw JSON errors', async ({ page }) => {
@@ -15,7 +16,7 @@ test('renders studio, synchronizes configuration and preserves raw JSON errors',
   await page.getByRole('button', { name: '切换 JSON 配置编辑器' }).click();
   await page.getByLabel('Session JSON').fill('{broken');
   await expect(page.getByRole('button', { name: '开始体验' })).toBeDisabled();
-  await page.getByLabel('Session JSON').fill(JSON.stringify(sceneConfig('meeting', DEFAULT_CONFIG, 'gpt-6-luna')));
+  await page.getByLabel('Session JSON').fill(JSON.stringify(sceneConfig('meeting', DEFAULT_CONFIG, 'gpt-6.1-sol')));
   await expect(page.getByRole('button', { name: '开始体验' })).toBeEnabled();
 });
 
@@ -68,11 +69,14 @@ test('backend blocks bad origins, missing CSRF, and unowned sessions', async ({ 
   expect(unowned.status()).toBe(400);
   const wrongScene = await request.post('/api/sessions', { headers: { Origin: origin, 'X-Studio-Csrf': config.csrf }, data: { transport: 'websocket', scene: 'home', session: sceneConfig('search', DEFAULT_CONFIG, config.responsesDeployment) } });
   expect(wrongScene.status()).toBe(400);
+  const obsoleteModel = await request.post('/api/sessions', { headers: { Origin: origin, 'X-Studio-Csrf': config.csrf }, data: { transport: 'websocket', session: sceneConfig('home', DEFAULT_CONFIG, 'not-allowed') } });
+  expect(obsoleteModel.status()).toBe(400);
 });
 
 test('WebSocket file input needs no microphone and normalizes WAV to raw PCM', async ({ page }) => {
   let microphoneRequests = 0;
   const audioBytes: number[] = [];
+  let silenceFrames = 0;
   await page.exposeFunction('unexpectedMicrophone', () => { microphoneRequests++; });
   await page.addInitScript(() => { navigator.mediaDevices.getUserMedia = async () => { await (window as any).unexpectedMicrophone(); throw new DOMException('Denied', 'NotAllowedError'); }; });
   await page.route('**/api/sessions', route => route.fulfill({ json: { id: 'test-session', session: DEFAULT_CONFIG } }));
@@ -83,7 +87,7 @@ test('WebSocket file input needs no microphone and normalizes WAV to raw PCM', a
       if (event.type === 'session.input_audio.append') {
         const bytes = Buffer.from(event.audio, 'base64');
         expect(bytes.toString('ascii', 0, 4)).not.toBe('RIFF');
-        audioBytes.push(bytes.length);
+        if (bytes.some(byte => byte !== 0)) audioBytes.push(bytes.length); else silenceFrames++;
       }
     });
   });
@@ -95,17 +99,19 @@ test('WebSocket file input needs no microphone and normalizes WAV to raw PCM', a
   const samples = 4800;
   const wav = Buffer.alloc(44 + samples * 2);
   wav.write('RIFF', 0); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8); wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22); wav.writeUInt32LE(48000, 24); wav.writeUInt32LE(96000, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write('data', 36); wav.writeUInt32LE(samples * 2, 40);
-  await page.locator('input[type=file]').setInputFiles({ name: 'synthetic-test.wav', mimeType: 'audio/wav', buffer: wav });
+  for (let i = 0; i < samples; i++) wav.writeInt16LE(4000, 44 + i * 2);
+  await page.getByLabel('上传音频', { exact: true }).setInputFiles({ name: 'synthetic-test.wav', mimeType: 'audio/wav', buffer: wav });
   await expect.poll(() => audioBytes.reduce((sum, size) => sum + size, 0)).toBe(4800);
   expect(audioBytes.every(size => size % 2 === 0 && size <= 960)).toBe(true);
   expect(microphoneRequests).toBe(0);
+  await expect.poll(() => silenceFrames).toBeGreaterThan(0);
 });
 
-test('search scene sends Luna delegation and displays only real source annotations', async ({ page }) => {
+test('search scene sends Sol delegation and displays only real source annotations', async ({ page }) => {
   let submitted: any;
   await page.route('**/api/sessions', route => { submitted = route.request().postDataJSON(); return route.fulfill({ json: { id: 'test-session', session: submitted.session } }); });
   await page.routeWebSocket('**/api/sessions/test-session/events', socket => {
-    socket.send(JSON.stringify({ type: 'session.started', session: sceneConfig('search', DEFAULT_CONFIG, 'gpt-6-luna'), _seq: 1 }));
+    socket.send(JSON.stringify({ type: 'session.started', session: sceneConfig('search', DEFAULT_CONFIG, 'gpt-6.1-sol'), _seq: 1 }));
     socket.send(JSON.stringify({ type: 'studio.scene.state', state: { scene: 'search' }, _seq: 2 }));
     socket.send(JSON.stringify({ type: 'session.delegation.created', delegation: { id: 'search-1', target: 'responses' }, offset_ms: 0, _seq: 3 }));
     socket.send(JSON.stringify({ type: 'response.event', delegation_id: 'search-1', event: { type: 'response.completed', response: { output: [{ content: [{ annotations: [{ type: 'url_citation', title: '来源示例', url: 'https://example.org/result' }] }] }] } }, _seq: 4 }));
@@ -117,15 +123,15 @@ test('search scene sends Luna delegation and displays only real source annotatio
   await page.getByLabel('输入源', { exact: true }).selectOption('file');
   await page.getByRole('button', { name: '开始体验' }).click();
   expect(submitted.scene).toBe('search');
-  expect(submitted.session.delegation.responses.model).toBe('gpt-6-luna');
+  expect(submitted.session.delegation.responses.model).toBe('gpt-6.1-sol');
   expect(submitted.session.delegation.responses.tools).toEqual([{ type: 'web_search' }]);
   await expect(page.getByRole('link', { name: '来源示例' })).toHaveAttribute('href', 'https://example.org/result');
 });
 
 test('home scene shows automatic simulated changes and recoverable tool errors', async ({ page }) => {
-  await page.route('**/api/sessions', route => route.fulfill({ json: { id: 'test-session', session: sceneConfig('home', DEFAULT_CONFIG, 'gpt-6-luna') } }));
+  await page.route('**/api/sessions', route => route.fulfill({ json: { id: 'test-session', session: sceneConfig('home', DEFAULT_CONFIG, 'gpt-6.1-sol') } }));
   await page.routeWebSocket('**/api/sessions/test-session/events', socket => {
-    socket.send(JSON.stringify({ type: 'session.started', session: sceneConfig('home', DEFAULT_CONFIG, 'gpt-6-luna'), _seq: 1 }));
+    socket.send(JSON.stringify({ type: 'session.started', session: sceneConfig('home', DEFAULT_CONFIG, 'gpt-6.1-sol'), _seq: 1 }));
     socket.send(JSON.stringify({ type: 'studio.scene.state', state: { scene: 'home', devices: [{ id: 'living_light', name: '客厅灯', power: true, brightness: 80 }] }, _seq: 2 }));
     socket.send(JSON.stringify({ type: 'session.delegation.created', delegation: { id: 'home-1', target: 'responses' }, offset_ms: 0, _seq: 3 }));
     socket.send(JSON.stringify({ type: 'response.event', delegation_id: 'home-1', event: { type: 'response.completed', response: { output: [{ type: 'function_call' }] } }, _seq: 4 }));

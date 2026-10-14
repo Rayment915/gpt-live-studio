@@ -13,3 +13,27 @@ main{max-width:1660px;margin:0 auto;padding:35px 40px 16px}.workspace-heading{di
 @media(max-width:680px){.duplex-symbol{display:none}.duplex-title{font-size:34px}.duplex-title>span{white-space:nowrap}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}.primary:hover:not(:disabled){transform:none}}
 .scene-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.scene-options button{border:1px solid var(--line);border-radius:7px;background:#F6F9FE;padding:9px 4px;font-size:11px}.scene-options button.active{border-color:var(--blue);background:#EAF0FF;color:var(--blue)}.scene-options button strong{font-weight:600}.scene-state{background:#F5F8FD;border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:12px 0;font-size:11px}.scene-state h3{font-size:11px;margin:0 0 7px}.scene-state p{margin:4px 0;line-height:1.5;overflow-wrap:anywhere}.scene-state article{border-top:1px solid var(--line);margin-top:8px;padding-top:8px}.scene-state article strong{overflow-wrap:anywhere}.scene-sources{display:grid;gap:4px;margin:8px 0;font-size:11px}.scene-sources a{color:var(--blue);overflow-wrap:anywhere}
+ .knowledge-panel { margin: 0 0 22px; padding: 24px; }
+ .knowledge-heading, .knowledge-actions, .knowledge-options, .knowledge-document, .knowledge-document-actions, .knowledge-heading h2 { display: flex; align-items: center; gap: 12px; }
+ .knowledge-heading { justify-content: space-between; flex-wrap: wrap; }
+ .knowledge-heading h2 { font-size: 18px; margin: 0; }
+ .knowledge-heading h2 span { font: 13px 'IBM Plex Mono', monospace; color: #5c7394; }
+ .knowledge-heading p, .knowledge-options > span { color: #667891; font-size: 12px; margin: 8px 0; }
+ .knowledge-options { justify-content: space-between; flex-wrap: wrap; margin: 20px 0 14px; padding-top: 16px; border-top: 1px solid #e5eaf2; }
+ .knowledge-options label { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+ .knowledge-options label { white-space: nowrap; }
+ .knowledge-options select { max-width: 260px; padding: 8px; border: 1px solid #d5dfeb; border-radius: 7px; background: white; }
+ .knowledge-document { border-top: 1px solid #e5eaf2; padding: 14px 0; }
+ .knowledge-document > svg { flex-shrink: 0; color: #536f9a; }
+ .knowledge-document-body { flex: 1; min-width: 0; }
+ .knowledge-document-body strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+ .knowledge-document-body small { display: block; color: #667891; margin-top: 5px; font-size: 11px; }
+ .knowledge-document-actions { flex-shrink: 0; }
+ .knowledge-document-actions a { font-size: 12px; color: #365f9c; }
+ .knowledge-document-actions button { padding: 7px; background: transparent; border: 1px solid #dce4ef; border-radius: 6px; }
+ .knowledge-empty { display: flex; align-items: center; justify-content: center; gap: 14px; min-height: 90px; color: #667891; font-size: 13px; }
+ .knowledge-progress { display: flex; gap: 12px; font-size: 12px; margin: 12px 0; }
+ .knowledge-progress progress { flex: 1; }
+ .knowledge-confirm { background: #fff7ef; border: 1px solid #e5bda0; border-radius: 8px; padding: 18px; margin-top: 16px; font-size: 13px; }
+ .knowledge-confirm p { line-height: 1.7; }
+ @media (max-width: 700px) { .knowledge-panel { padding: 16px; } .knowledge-heading { align-items: flex-start; } .knowledge-actions { flex-wrap: wrap; } .knowledge-options select { max-width: 235px; } .knowledge-heading p { max-width: 280px; } }
