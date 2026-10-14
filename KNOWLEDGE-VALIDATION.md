@@ -88,3 +88,13 @@
 - 对官方文档 31 项音色执行真实 Azure Session 启动/关闭测试，22 项成功，9 项返回 Invalid voice；最终保留的六项全部在成功列表中。记录在 `output/voice-smoke-catalog.json` 和 `output/voice-smoke.json`。这验证了会话接受情况，未进行逐音色听感评估。
 - `npm run test:scene:live -- home` 使用真实 Luna 托管委派，工具成功设置模拟空调，收到语音输出和最终用量（4.2 秒），errors 为空。未把这次冒烟等同于全部知识库语音场景验收。
 - 本地服务器地址 `http://localhost:3000`。只更新本地代码和私有开发配置，没有发布或更改生产应用。
+
+## 后续生产发布验证（2026-10-14 16:18 UTC）
+
+在用户授权发布后，已补齐生产 worker 镜像、私有 Blob 存储、VNet、Private Endpoint 和独立生产 Container Apps 环境。该阶段取代上文本地阶段“尚未发布”的范围描述；早期测试结果仍按原记录保留。
+
+- 新生产镜像在真实私网和生产身份下通过 Markdown、中文 Word 的上传、LibreOffice 转换、OCR、Embedding 和 Foundry IQ 索引测试。
+- Luna 全文问答与 IQ 问答均返回正确引用、真实语音音频及正常会话结束，无错误；样本文档已通过删除 API 和 worker 清理。
+- 生产健康检查返回200，未登录访问配置与知识库返回401；独立本地密码登录/退出浏览器测试通过。
+- 现有密码哈希沿用，原入口通过302跳转新站点；旧应用版本保留供回滚。具体资源、地址和回滚步骤见 [PRODUCTION.md](PRODUCTION.md)。
+- 没有迁移本地用户文档、没有使用真实麦克风。连续多人插话、长期听感及最大上下文压力测试仍未宣称完成。

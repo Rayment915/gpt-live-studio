@@ -15,6 +15,8 @@ test('requires login before accessing the studio, API and session controls', asy
   await page.getByLabel('密码').fill('test-only-password');
   await page.getByRole('button', { name: '登录' }).click();
   await expect(page.getByRole('heading', { name: '对话，不必等待。' })).toBeVisible();
+  // Wait for the application's bootstrap cookie/CSRF pair before making another config request.
+  await expect(page.getByRole('button', { name: '退出登录' })).toBeVisible();
   const config = await (await page.request.get('/api/config')).json();
   expect(config.authMode).toBe('password');
   await page.getByRole('button', { name: '退出登录' }).click();

@@ -1,6 +1,7 @@
 # Production release
 
-Production app: `https://gpt-live-studio.wonderfulwater-d017f2b1.southeastasia.azurecontainerapps.io`.
+Production app: `https://gpt-live-studio-prod.politeisland-5c1098a5.southeastasia.azurecontainerapps.io`.
+Original entry (redirect): `https://gpt-live-studio.wonderfulwater-d017f2b1.southeastasia.azurecontainerapps.io`.
 Existing password authentication is retained. Deployments use subscription `subscription1`, resource group `RG1`, and the Singapore VNet-enabled environment `gpt-live-prod-env`. The previous `realtime-psr-env` application is retained as a rollback target; after verification its landing page redirects to the new production application.
 
 ## Components
@@ -33,3 +34,27 @@ The worker uses `Dockerfile.worker`, LibreOffice, Noto CJK fonts and `/app/.venv
 
 First-release images: `rtpsr678b10.azurecr.io/gpt-live-studio:kb-20261014-2` and `rtpsr678b10.azurecr.io/gpt-live-worker:kb-20261014-1`.
 Local development continues to use the private `.env` and Azurite. See [KNOWLEDGE.md](KNOWLEDGE.md) for local commands, and [KNOWLEDGE-VALIDATION.md](KNOWLEDGE-VALIDATION.md) for earlier validation and remaining conversation-quality limits.
+
+## Verified release
+
+The production-image smoke execution `gpt-live-release-smoke-tae2gea` completed at `2026-10-14T16:18:29Z`. It ran in a temporary private-network Job using the production image and identity, with a loopback-only test server. Markdown and Chinese Word fixtures passed upload, LibreOffice/Python validation, OCR, embedding and indexing. Full-document and IQ sessions both returned correct cited answers and real voice audio (102 and 226 audio events respectively), closed normally, and reported no errors. Both fixtures were deleted through the document API and worker before completion. No real microphone or user documents were used.
+
+The public production endpoint returns 200 for health and login, and 401 for unauthenticated config/knowledge requests. Password login/logout was separately tested with an isolated local test password; production password hashes were preserved. This release does not claim completed human listening, prolonged interruption tests or maximum-context stress testing.
+
+```mermaid
+flowchart LR
+  Browser[Browser] --> Entry[Original entry: redirect]
+  Entry --> App[Production app: password login]
+  subgraph Singapore[Singapore: private production network]
+    App --> PE[Blob Private Endpoint]
+    Worker[Scheduled document Job] --> PE
+    PE --> Blob[Private production documents]
+  end
+  Worker --> OCR[Singapore Document Intelligence]
+  Worker --> Embedding[Singapore Embedding]
+  Worker --> Search[Singapore Search / Foundry IQ]
+  App --> Search
+  App <--> Live[East US 2 GPT-Live-1]
+  Live <--> Responses[Default Luna / optional Sol]
+  Responses -->|search_knowledge| App
+```

@@ -107,7 +107,7 @@ flowchart TB
   Blob -.->|网络可达后切换相同适配器| CloudBlob
 ```
 
-Singapore 是本轮 RAG 资源所在地；Sol 在现有 East US 2 Foundry 资源中创建独立开发部署。模型使用 GlobalStandard；本图不是对每次模型推理物理位置的地域驻留保证。生产阶段的 Singapore Container Apps Job 不在本轮执行范围。
+Singapore 是 RAG 资源所在地；Sol 在现有 East US 2 Foundry 资源中使用独立部署。模型使用 GlobalStandard；本图不是对每次模型推理物理位置的地域驻留保证。上图描述本地开发方案；已部署的私网生产环境与 Singapore Container Apps Job 见 [生产架构](PRODUCTION.md)。
 
 ## 处理、路由与引用
 
